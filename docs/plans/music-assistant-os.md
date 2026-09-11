@@ -1,6 +1,6 @@
 # Music Assistant OS: technical plan
 
-Status: proposal, 2026-09-10. Owner: Marcel van der Veldt. This document is the technical
+Status: proposal, 2026-09-10; spike results added 2026-09-11. Owner: Marcel van der Veldt. This document is the technical
 companion of the "Music Assistant OS" story on the project board. It is written so it can be fed
 to an agent for implementation; every claim marked "verified" was checked in the referenced code.
 
@@ -277,7 +277,9 @@ source-offer obligation for a distributed image (public repo + Buildroot sources
   partitions (`haos` compatible, official HAOS OTA) with branding limited to hostname and the MA
   UI, or carry a patched Supervisor image (not recommended: it self-updates from the version file).
 - The Supervisor self-updates before appliance mode is official and a release breaks the dummy
-  image trick: pin the Supervisor with `auto_update: false` in the pre-seed until it lands.
+  image trick. Pinning it is not an option: its job conditions block app installs and updates
+  whenever the Supervisor is outdated. Accept the risk, watch Supervisor releases, and get
+  appliance mode upstream quickly.
 - HA architecture discussion #1447 (Aug 2026) proposes tightening add-on roles: our `manager`
   dependence sits in its path; being a first-party OHF use case is the mitigation.
 - RAM: Supervisor + plugins add ~300MB on top of MA (2GB floor, 4GB recommended): Pi 4 4GB / Pi 5.
@@ -293,6 +295,52 @@ source-offer obligation for a distributed image (public repo + Buildroot sources
   points at the non-existent `music-assistant/core`; README links issues to the deprecated
   `hass-music-assistant`; stray `gitignore` file at the root.
 - `music_assistant/helpers/pulse_capture.py` docstring references a removed `enumerate_pa_sinks()`.
+
+## Spike results (2026-09-11, Home Assistant OS 18.2 generic-aarch64 in UTM)
+
+Everything below is verified on a VM; the Pi and the Wi-Fi hotspot are still open (needs hardware).
+
+- Core-less Supervisor: with a dummy Core image carrying the labels `io.hass.version=2099.1.0`,
+  `io.hass.arch=<arch>`, `io.hass.type=core` and `homeassistant.json` set to `boot: false`,
+  `watchdog: false`, `override_image: true`, `version: 2099.1.0`, the Supervisor attaches the
+  image, logs "Skipping start of Home Assistant", marks the RAUC slot good at its own startup
+  (grub `A_OK=1`, `A_TRY=0` after reboot), stays `healthy: true`, and the only unsupported reason
+  is `home_assistant_core_custom_image`. Without the version label the Supervisor reads version
+  `None` and its Core loader throws in a background task.
+- The Supervisor renamed add-ons to apps: local apps live in `apps/local/<dir>` (slug
+  `local_<dir>`, containers `app_<slug>`), installed state is `apps.json` with a `user` and a
+  `system` section, the CLI is `ha apps ...`, and the store needs `ha store reload` to pick up a
+  new local app. The Music Assistant add-on repository is a default Supervisor repository.
+- Manager role from inside Music Assistant: `/network/*`, `/os/*`, `/host/*`, `/mounts/*`,
+  `/audio/*`, `/hardware/*`, `/store/*`, `/addons/*`, `/backups/*`, `/supervisor/*`,
+  `/core/info`, `/os/datadisk/list` answer 200; `/os/ssh/authorized_keys` is 403. Music Assistant
+  configured and started the Samba app and created a CIFS media mount through the API; the mount
+  appeared live under `/media/nas` inside its own running container.
+- USB automount: two udev rules on the persistent overlay (`RUN+=systemd-mount --no-block
+  --collect $devnode /mnt/data/supervisor/media/<label-or-uuid>`) mounted an exFAT stick within a
+  second; Music Assistant listed its files live. On unplug systemd unmounts, but the empty mount
+  point stays, so matching `ACTION=="remove"` rules `rmdir` it, and the MAOS provider must test
+  for a mounted filesystem, not a directory.
+- Local Audio starts and registers as a Sendspin player even without a sound card; playback and
+  USB DAC hot-plug remain to be tested on hardware.
+- Music Assistant under the core-less Supervisor logs two things the MAOS mode must suppress: the
+  discovery announcement (403, outside the manager role) and the Home Assistant provider retrying
+  the Core websocket every two minutes (502).
+- Pre-seeded image (music-assistant/operating-system, PR #1 merged): the data partition is built
+  with the same dockerd as the device (29.6.2, containerd snapshotter) inside a privileged builder
+  container; `docker load` unpacks only native-arch layers, so the aarch64 partition is 4.7GiB when
+  built on arm64 and about 1.9GiB when built on amd64 runners (layers unpack at the first container
+  start on the device; stock HAOS ships the same way). The repack replaces the last GPT partition
+  keeping its GUID and the Raspberry Pi hybrid MBR; `maos_generic-aarch64-18.2.img.xz` is 1.7GB.
+  Offline first boot: 27s to Docker, slot marked good at 29s, Local Audio at 29s, Music Assistant
+  at 36s, UI within a minute, nothing downloaded. The hostname is pre-seeded on the overlay
+  partition (`musicassistant.local`); os-release and the console still say Home Assistant until the
+  variant build exists. CI builds the data partitions and the rpi4, rpi5 and generic-aarch64 images
+  on GitHub runners.
+- Sizes on the device after real use: server image 3GB unpacked, Supervisor 0.5GB, plugins 0.4GB,
+  Local Audio 0.4GB; the containerd store keeps compressed and unpacked layers, 7.3GB in total.
+- Every device flashed from one image shares the pre-seeded Supervisor and app UUIDs (the app
+  access tokens are regenerated on every app start); first boot should regenerate them later.
 
 ## Facts established (2026-09-09/10, condensed, verified in code or docs)
 
