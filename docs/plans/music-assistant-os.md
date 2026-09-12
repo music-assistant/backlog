@@ -342,6 +342,22 @@ Everything below is verified on a VM; the Pi and the Wi-Fi hotspot are still ope
 - Every device flashed from one image shares the pre-seeded Supervisor and app UUIDs (the app
   access tokens are regenerated on every app start); first boot should regenerate them later.
 
+### Branded build (2026-09-12)
+
+- Home Assistant OS 18.2 rebuilt from source in CI with the Music Assistant OS branding as a
+  stopgap layer (`os/patches`: the OS name only, `ID`/`CPE` stay `haos`; hostname and issue text;
+  `os/rootfs-overlay`: our console banner and motd in place of the HA CLI console), then repacked
+  with the pre-seeded data partition. Boots in UTM as "Music Assistant OS 18.2" on
+  `musicassistant.local` with the Supervisor healthy and both apps started.
+- Build cost on GitHub runners: 6h cold, 1h47m with the compiler cache; the Buildroot tree needs
+  about 35GB, so the workflow reclaims ~50GB of the runner disk first. Local builds on the Mac's
+  Docker Desktop VM are not feasible (too little memory); the config step is.
+- Still Home Assistant branded: the `ha` CLI container, the observer page (:4357) and some
+  Supervisor messages hardcode the name. Upstream ask added (read the name from os-release); no
+  CLI fork. The RAUC compatible is still `haos-<board>` and the bundle self-signed, so a HAOS OTA
+  would install over the branding: isolating the update stream is the next OS-side step and
+  depends on the Supervisor version-source ask.
+
 ## Facts established (2026-09-09/10, condensed, verified in code or docs)
 
 MA packaging: `ghcr.io/music-assistant/server`, Debian trixie + Python 3.14, amd64/arm64, rolling
