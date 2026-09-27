@@ -108,21 +108,21 @@ table and is reachable as `mass.music.favorites`: `get(user_id, media_type, item
 item_id, favorite)`, `disliked_track_keys(user_id)`, `move_item`, `remove_item`,
 `release_user(user_id)`, `expand_pending()`.
 
-Migration step `prev_version <= 60`, in this order:
+Migration step `prev_version <= 60`, in this order: create the table and index; for every
+media table, `INSERT OR IGNORE` a like (favorite = 1, timestamp = the row's
+`timestamp_modified`) under the placeholder user id `__pending__` for every row with
+`favorite = 1`; `DROP INDEX IF EXISTS {table}_favorite_idx`, then
+`ALTER TABLE {table} DROP COLUMN favorite`, swallowing "no such column". Remove the column and
+index from `__create_database_tables`. The migration does no attribution at all: the provider
+access records (and with them the owners) are migrated by `migrate_provider_access()` after
+the library, and the users live in `auth.db`, which opens with the webserver.
 
-1. Create the table and index.
-2. For every media table and every configured music source with an owner (raw provider configs
-   via `helpers/provider_access.py`, readable at migration time): `INSERT OR IGNORE` a like for
-   the owner on every favorited item that has an `in_library = 1` mapping on that instance.
-3. For every favorited item that has an `in_library = 1` mapping on a household source (no
-   access record or owner `None`), or no `in_library = 1` mapping at all: `INSERT OR IGNORE` a
-   like under the placeholder user id `__pending__`.
-4. `DROP INDEX IF EXISTS {table}_favorite_idx`, then `ALTER TABLE {table} DROP COLUMN favorite`,
-   swallowing "no such column". Remove the column and index from `__create_database_tables`.
-
-Post-webserver one-off in `mass.start()`, next to the local_audio tombstone: `expand_pending()`
-copies every `__pending__` row to every user from `auth.list_users()` (`INSERT OR IGNORE`, one
-statement per user) and deletes the placeholder rows. Idempotent on data presence, no flag.
+Post-webserver one-off in `mass.start()`, right after `migrate_provider_access()`:
+`settle_pending()` gives every parked favorite to the owner of each music source that has an
+`in_library = 1` mapping on the item (`INSERT OR IGNORE`, one statement per owned source),
+and to every user from `auth.list_users()` when a household source (no access record or owner
+`None`) holds it or no source holds it at all; then deletes the placeholder rows. Idempotent
+on data presence, no flag.
 
 Sweeps: `remove_item_from_library` deletes the item's rows; `_merge_library_items` moves the
 source item's rows to the target with `INSERT OR IGNORE` then deletes them, ordered so a crash
@@ -214,8 +214,8 @@ playback does with it, what happens to existing favorites on update.
 
 1. Server PR 6212 (write-through scoped to the acting user's sources) merges first.
 2. Models: nullable favorite and the event. Release, then bump the server pin.
-3. Server storage (schema 61): sections 2, 3 and 4, with tests for the migration (owned,
-   household and unmapped favorites), the pending expansion, per-user listings and counts,
+3. Server storage (schema 61): sections 2, 3 and 4, with tests for the migration, the settling of parked
+   favorites (owned, household and unmapped), per-user listings and counts,
    sync attribution, write-through and events.
 4. Server playback gate: section 5, with tests on the three fill paths.
 5. Frontend: section 6.
