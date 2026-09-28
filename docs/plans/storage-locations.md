@@ -1,6 +1,6 @@
 # Storage locations and one Local files provider: technical plan
 
-Status: proposal, 2026-09-17. Owner: Marcel van der Veldt. This document is the technical
+Status: in implementation since 2026-09-28 (proposal 2026-09-17); see "Changes during implementation" for what differs from the original text. Owner: Marcel van der Veldt. This document is the technical
 companion of the "Local files: pick where your music lives" epic on the project board. It is
 written so it can be fed to an agent for implementation; every claim marked "verified" was
 checked in the referenced code (server at `8756e45a3`, add-on repo, Supervisor source).
@@ -159,9 +159,11 @@ macOS and Windows: no discovery. Admins register a folder on the Storage page.
 - `close()` does not unmount: a Supervisor mount outlives an add-on restart by design, and a
   local mount torn down on every restart only costs a remount.
 
-Visibility: members see media locations of kinds `builtin_media`, `container_volume`,
-`network_share`, `removable`. Admins see everything, including bare-metal `local_disk`
-discovery, registered folders and the data/cache rows.
+Visibility: admins see everything. Members see the media locations that were deliberately made
+available to Music Assistant: every media location when the server runs in a container or under
+a Supervisor, and only managed ones (shares Music Assistant mounted, registered folders) on a
+host without a container, where the mount table holds whatever the host has mounted. The
+server's own data and cache folders are never browsable and never a place for a music source.
 
 ### 4. API (`API_SCHEMA_VERSION` 77 → 78)
 
@@ -404,6 +406,59 @@ flowchart LR
   SV --> OS
   LM --> OS
 ```
+
+## Changes during implementation
+
+Decisions and findings from the implementation run (2026-09-28 onwards). Where this section and
+the text above disagree, this section is what was built.
+
+- **Automount.** The Supervisor mounts network shares behind systemd automount units (verified
+  in `supervisor/mounts/mount.py`). The mount table shows an `autofs` entry at `/media/<name>`
+  and the real `cifs`/`nfs4` entry only once something accessed the share. `os.statvfs` wakes a
+  dormant trigger, a plain `stat` does not. Discovery treats an `autofs` mountpoint as a network
+  share that is unavailable until a probe woke it. The Supervisor's mount options are NFS
+  `softerr,timeo=100,retrans=2` and CIFS `soft,echo_interval=10,retrans=0`, about 30 seconds per
+  operation before an error.
+- **Probes on demand, never on a timer.** The 60 s timer only re-reads the mount table. A
+  location is probed (`statvfs`, then `stat`) when someone needs its state: `storage/info`
+  (the picker or the Storage page opens), `is_available` (a source loads or recovers),
+  `storage/folders`, and registering a folder. An answer is valid for 30 seconds. An idle NAS is
+  never woken by Music Assistant.
+- **A dead share costs one thread.** Each probe runs in its own daemon thread, at most one in
+  flight per path, waited for at most 10 seconds. A location that does not answer is listed as
+  unavailable and updated when its answer arrives. Nothing waits on another location's probe,
+  and a blocked probe never holds up the shutdown. This replaces the single refresh thread of
+  the original design, which a hard NFS mount bound into a Docker container could block forever.
+- **Remembered mounts.** Mountpoints seen in the mount table are remembered while the server
+  runs. A folder whose mount is gone is not available, even though the empty folder it leaves
+  behind exists.
+- **Discovery details.** `/tmp` is excluded (the old providers mount there). The add-on folders
+  (`/data`, `/ssl`, `/config`, `/addons`, `/backup`, `/share`) are excluded only inside a
+  container, since on bare metal those are common names for data disks. `/efi` is excluded.
+  `fakeowner` (Docker Desktop for Mac bind mounts) is an allowed filesystem type. A mount below
+  `/media/` counts as removable only under a Supervisor or on bare metal; in a plain container it
+  is a container volume.
+- **Registering a folder** is refused for `/`, for the data and cache folders, and for a path
+  that already is a location, also when reached through a symlink.
+- **API.** The schema version goes from 80 to 81. `StorageInfo` gained
+  `supported_share_versions` (per share type the protocol versions the mount backend can
+  honour): through the Supervisor that is SMB `1.0` and `2.0` and none for NFS, which has no
+  version field there. Editing a share replaces its settings; an omitted password keeps the
+  stored one. `StorageLocation` gained `share_name`, `username`, `version`, `total_space_gb`
+  and `used_space_gb`. Sizes are gibibytes.
+- **Own mounting knows up front whether it may mount.** It checks CAP_SYS_ADMIN in the effective
+  capability set next to uid 0 and the helper binaries, so the Storage page can explain that
+  shares cannot be mounted before anyone tries. The original text said no capability parsing.
+- **Share records carry their backend and path.** The location of a share is recorded when it
+  is added and never moves.
+- **Frontend.** No schema or server version gating: the frontend ships with the server. The
+  Storage page is for admins only; members use the folder picker. The picker links to the
+  Storage page itself, so the setup step needs no link. The three fixed rows (media folder,
+  data, cache) are named by the frontend so they can be translated.
+- **Add-on.** The dev app's version is bumped by the nightly workflow, so the manifest change
+  reaches it without a manual bump. The manager role costs one point in the Supervisor's security
+  rating, which removing the mount privileges gives back.
+- **Testing.** The dev app's `server_repo` and `frontend_repo` options take `pr-<number>`.
 
 ## Test plan
 
