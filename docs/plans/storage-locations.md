@@ -458,6 +458,52 @@ the text above disagree, this section is what was built.
 - **Add-on.** The dev app's version is bumped by the nightly workflow, so the manifest change
   reaches it without a manual bump. The manager role costs one point in the Supervisor's security
   rating, which removing the mount privileges gives back.
+- **Schema version after the setup flow.** The Local files setup flow with the folder entry
+  brought the schema version to 84.
+- **Start order.** The storage controller is set up before the discovery controller, and a request
+  to the Supervisor needs the http session that discovery creates. The Supervisor backend waits
+  for discovery before its first request. The backends are probed again when a share is connected
+  or reloaded, so a backend that was not ready at the start is found later.
+- **Registered folders remember their mount.** A registered folder that lies on a mount stores
+  that mount in `storage_folder_mounts`. While the mount is gone the folder is listed as
+  unavailable, with the reason. A path that already is a discovered location can be registered, so
+  other users can pick it on an install without a container.
+- **Who sees which location.** In a container or under a Supervisor a user who may add their own
+  sources sees every media location. On an install without a container they see only the folders
+  and shares an administrator added on the Storage page.
+- **Used by and also read by.** A location lists in `used_by` the sources whose folder is the
+  location or lies inside it, and in `read_by` the sources whose folder lies around it. A source
+  is named on the location closest to its folder. A location with `used_by` can not be removed. A
+  share with only `read_by` can be removed after a warning that names the sources that lose items
+  at their next sync. Both lists are empty for a user who is no administrator. `read_by` came
+  without a schema bump: the command was not released yet and only the bundled frontend calls it.
+- **Conversion without a marker.** The conversion runs at every start and returns before its first
+  await when no SMB or NFS source is stored. A source that could not be converted at one start is
+  tried again at the next.
+- **Conversion keeps the instance id.** Only the domain changes, so an id like
+  `filesystem_smb--fyQZakP3` stays. The library refers to items by instance id and relative path,
+  and both are unchanged.
+- **Conversion writes no name.** A converted source gets the default name of Local files, "Local
+  files" or "Local files [folder]", stored as `default_name`. A name the user gave stays. The
+  stored default names of all sources of a kind are updated when one is added or removed.
+- **Conversion rewrites playlists of the builtin provider.** Entries that name a converted source
+  get the Local files domain. A file is written only when the writer reproduces the file as it was
+  read. An entry that names only the old domain is converted when no source of that domain is left
+  as it is.
+- **Conversion clears cached items.** The cached playlist tracks, album and artist info, sound
+  effects, podcast episodes and search results of a converted source name its old domain and are
+  removed. The list of items of the last sync stays, the next sync needs it.
+- **Storage page.** It sits under System in the settings. A location that no source uses offers
+  "Use as music source", which opens the setup of a Local files source with that folder filled in.
+  The message after adding a share offers the same.
+- **Own mounting in a container stays as it is.** Capabilities are needed but do not prove that
+  mounting works. AppArmor and rootless containers can still block it. Detecting more, or
+  installing the mount packages at runtime, was rejected: mounting inside the container is the way
+  we do not recommend, and the error points to the docs with the better ways. The packages cost 32
+  MB of a 2.18 GB image.
+- **After the epic.** Symlinks in the Local files reader, the two older path bugs found during the
+  conversion audit, the image cache for a source that is configured but not loaded, and a sync
+  guard below a missing mount are follow-ups.
 - **Testing.** The dev app's `server_repo` and `frontend_repo` options take `pr-<number>`.
 
 ## Test plan
