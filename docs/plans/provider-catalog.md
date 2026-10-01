@@ -166,9 +166,12 @@ Server:
   `support_url`, when present, must be an `https` URL.
 - One-time edit of the manifests the team considers core: add `"tier": "core"` and, where
   missing, `@music-assistant` to codeowners. Everything else gets `"tier": "community"`. The
-  initial split is the maintainer's call; the 51 manifests already listing `@music-assistant`
-  are the starting point. Codeowners of community providers are asked, in the PR, whether they
-  want a `support_url`.
+  rule is applied strictly at the first edit (decided 2026-10-02): the 49 manifests listing
+  `@music-assistant` become core, the other 76 community, including providers owned by core
+  members, who add the org handle themselves in that PR if they want the team behind it. The
+  per-provider list and the housekeeping found by the audit are in
+  [provider-catalog-tier-split.md](provider-catalog-tier-split.md). Codeowners of community
+  providers are asked, in the PR, whether they want a `support_url`.
 - The frontend interface gains `tier` and `support_url`. Additive fields, no
   `API_SCHEMA_VERSION` bump unless a non-bundled client needs to detect them (ask first).
 - `DEVELOPMENT.md` manifest table documents both fields and the rule.
