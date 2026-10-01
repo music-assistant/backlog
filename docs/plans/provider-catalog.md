@@ -84,6 +84,8 @@ are not part of this plan; the reasons and the triggers to revisit are recorded 
 - A "Request a provider" link to the feature request forum (worded "Missing something?").
 - Codeowners can get their own provider updates merged without a core maintainer, after CI,
   an AI review and the existing dependency review pass. New providers cannot be self-merged.
+- A codeowner can ask for a bugfix to their own provider to be backported to stable by
+  ticking a box; anyone else's request waits for a core maintainer.
 - Issues labelled with a provider mention its codeowners once; a maintainer with a
   `support_url` is pointed to as well.
 - A published dev container runs a fork, branch, PR or commit the way the Dev add-on does.
@@ -127,7 +129,12 @@ are not part of this plan; the reasons and the triggers to revisit are recorded 
   approves with the Actions token and enqueues with a token minted from the "Music Assistant
   Bot" GitHub App (`vars.MUSIC_ASSISTANT_BOT_CLIENT_ID`, `secrets.MUSIC_ASSISTANT_BOT_PRIVATE_KEY`).
   `dependency-approval-command.yml` is the comment-command pattern (`/approve-dependencies`,
-  maintainers only). `scripts/check_provider_scope.py` classifies changed paths into provider
+  maintainers only). `pr-labels.yaml` derives the one release-notes label from the ticked
+  "Types of changes" checkbox (a known-label list, default token) because external
+  contributors cannot label their own PRs. `backport-to-stable.yml` runs on the
+  `backport-to-stable` label event and on every push to dev, where it reads the merged PR's
+  labels; the label is applied by hand by a core maintainer today.
+  `scripts/check_provider_scope.py` classifies changed paths into provider
   folders versus shared code (advisory today). `scripts/ci_test_scope.py` runs only the changed
   providers' tests. Copilot reviews every push.
 - Support: `music-assistant/support` has an AI triage workflow (`triage.yml`, runs
@@ -260,6 +267,19 @@ no audio URL exposure, no stored decoded audio, throttled and cached, respects s
 A maintainer who has checked it sets `policy-approved`; from then on the same workflow may run
 on a maintainer's `/merge`. The human sign-off is the one step that stays, because the review
 that caught a login grabber in a past provider PR was a human one.
+
+**Backport requests.** Codeowners cannot apply labels, and `backport-to-stable` is applied by
+hand by a core maintainer today. The PR template gets a "Backport" block with one checkbox:
+"This bugfix is also present in the current stable release and should be backported
+(`backport-to-stable`)". `pr-labels.yaml` handles that label outside its one-type rule: it is
+applied when the box is ticked, the ticked type is `bugfix`, and the requester may ask for it,
+meaning the PR author has write access or the PR is fast-lane eligible (single provider scope,
+author in the base-branch codeowners). Otherwise the workflow adds `backport-requested` and
+comments once that a core maintainer decides; the maintainer then applies `backport-to-stable`
+as today. Unticking removes the label the workflow applied. The label lands before the merge
+with the default token, which is fine: `backport-to-stable.yml` reads the merged PR's labels on
+the push to dev, so no label event is needed. The `/merge` outcome comment says when the fix
+will be backported.
 
 `DEVELOPMENT.md` gets a "Community providers" section: what the tier means, what codeowners may
 merge, and that a provider's codeowner is expected to fix it when a base-class change breaks it
@@ -395,6 +415,10 @@ user-facing part. 5 to 7 can run in parallel with 3 and 4.
 - Fast lane: a codeowner's `/merge` on an in-scope green PR merges; the same command from a
   non-codeowner, on a PR touching shared files, with a failing dependency status, with an
   unresolved thread, or on a new provider is refused with the reason in a comment.
+- Backport box: ticked by a codeowner on an in-scope bugfix PR applies `backport-to-stable`
+  and the merge is cherry-picked onto the release branch; ticked on an enhancement, or by an
+  author who is neither a maintainer nor the codeowner, yields `backport-requested` and one
+  comment, and no backport until a maintainer labels it.
 - Support: an issue labelled with a provider gets exactly one mention comment, with the
   `support_url` line only when the manifest has one.
 - Dev container: `docker run -e SERVER_REPO=pr-1234 ghcr.io/music-assistant/server:dev` runs
