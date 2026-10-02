@@ -1,6 +1,6 @@
 # Sign in with your own identity provider: technical plan
 
-Status: proposal 2026-10-01. Owner: Marcel van der Veldt. This document is the technical companion of the "Sign in with your own identity provider" epic (music-assistant/backlog#183) on the project board. It is written so it can be fed to an agent for implementation; every claim marked "verified" was checked in the referenced code (server at `27772e407`, models at `6626960`, frontend at `7a636358`, mobile at `a501ff18`, desktop at `912133f`, portal app.music-assistant.io at `35607a1`).
+Status: proposal 2026-10-01. Owner: Marcel van der Veldt. This document is the technical companion of the "Sign in with your own identity provider" epic (music-assistant/backlog#183) on the project board. It is written so it can be fed to an agent for implementation; every claim marked "verified" was checked in the referenced code (server at `27772e407`, its Home Assistant user mapping and Ingress resolution at `ca5a03f96`, models at `6626960`, frontend at `7a636358`, mobile at `a501ff18`, desktop at `912133f`, portal app.music-assistant.io at `35607a1`).
 
 ## Summary
 
@@ -538,7 +538,8 @@ Profiles are never rewritten on later logins; only the identity snapshot is. `ha
 `resolve_user` and keeps today's behaviour (link by HA user id, then by username, then
 self-registration with the HA admin role mapping, profile refresh from HA): it calls
 `get_or_create_ha_user(..., allow_create=<auth_allow_self_registration>)` and refuses a disabled
-user with `login_account_disabled`, "User account is disabled" like the Home Assistant login today.
+user with `login_account_disabled` ("User account is disabled", as the Home Assistant login answers
+today).
 
 **Accounts and identities API.**
 
