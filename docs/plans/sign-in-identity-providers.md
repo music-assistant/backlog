@@ -539,7 +539,7 @@ Profiles are never rewritten on later logins; only the identity snapshot is. `ha
 self-registration with the HA admin role mapping, profile refresh from HA): it calls
 `get_or_create_ha_user(..., allow_create=<auth_allow_self_registration>)` and refuses a disabled
 user with `login_account_disabled` ("User account is disabled", as the Home Assistant login answers
-today).
+today) and fails with `login_no_account` when it returns no user.
 
 **Accounts and identities API.**
 
@@ -993,13 +993,13 @@ it.
 
 | bug | where (verified) | fix |
 |---|---|---|
-| `auth/user/providers` returns the builtin row, whose `provider_user_id` is the PBKDF2 password hash | `controllers/webserver/auth.py:1625-1639`; hash stored at `helpers/auth_providers.py:476-477` | leave builtin rows out of the response |
-| `auth/tokens` returns `token_hash` | `auth.py:823-829`; field in models `auth.py:138` | leave the hash out of the response |
+| `auth/user/providers` returns the builtin row, whose `provider_user_id` is the PBKDF2 password hash | `controllers/webserver/auth.py:1625-1639`; hash stored at `helpers/auth_providers.py:476-477` | leave builtin rows out of the response (fixed by [server#6649](https://github.com/music-assistant/server/pull/6649), which returns the builtin row with an empty `provider_user_id` instead) |
+| `auth/tokens` returns `token_hash` | `auth.py:823-829`; field in models `auth.py:138` | leave the hash out of the response (fixed by [server#6649](https://github.com/music-assistant/server/pull/6649), which returns an empty `token_hash` instead) |
 | `PATCH /auth/me` skips the system-user guard and the username checks of `auth/user/update` | `controller.py:1127-1160` versus `auth.py:1550-1551` | route through the same rules, or drop the endpoint |
-| `POST /auth/logout` deletes the token row but leaves its websockets connected | `controller.py:1101-1117` versus `auth.py:1615-1621` | call `disconnect_websockets_for_token` |
+| `POST /auth/logout` deletes the token row but leaves its websockets connected | `controller.py:1101-1117` versus `auth.py:1615-1621` | call `disconnect_websockets_for_token` (fixed by [server#6650](https://github.com/music-assistant/server/pull/6650)) |
 | Home Assistant login of a disabled user: the username path builds the user from the raw row without the enabled check, so a token is minted or `update_user`'s assert fails | `auth_providers.py:817-845`, `auth.py:600` | refuse disabled users with a clear error (fixed by [server#6651](https://github.com/music-assistant/server/pull/6651)) |
 | Ingress user resolution exists twice | `auth_middleware.py:120-175`, `websocket_client.py:521-567` | one shared helper (fixed by [server#6651](https://github.com/music-assistant/server/pull/6651); [server#6657](https://github.com/music-assistant/server/pull/6657) also shares the Home Assistant user mapping between Ingress and the Home Assistant login) |
-| Websocket `auth/authorization_url` does not validate `return_url` | `auth.py:1066-1091` versus `controller.py:1184-1188` | validate like the HTTP route |
+| Websocket `auth/authorization_url` does not validate `return_url` | `auth.py:1066-1091` versus `controller.py:1184-1188` | validate like the HTTP route (fixed by [server#6650](https://github.com/music-assistant/server/pull/6650)) |
 | Webserver README is out of date: bcrypt instead of PBKDF2, 10-year long-lived tokens, opaque tokens instead of JWTs, a remote OAuth polling flow that does not exist, the provider-id callback | `controllers/webserver/README.md` (lines 59, 64, 68, 185-203, 421-423) | rewrite now (documentation, not a code bug); sub-issue 2 updates it again |
 | Frontend `AuthProviderType.OAUTH_HOMEASSISTANT = "oauth_homeassistant"` while the server sends `homeassistant` | frontend `src/plugins/api/interfaces.ts:1788-1791`, models `auth.py:31-32` | correct the value |
 
