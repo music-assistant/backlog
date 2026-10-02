@@ -1,6 +1,6 @@
 # Sign in with your own identity provider: technical plan
 
-Status: proposal 2026-10-01. Owner: Marcel van der Veldt. This document is the technical companion of the "Sign in with your own identity provider" epic (music-assistant/backlog#183) on the project board. It is written so it can be fed to an agent for implementation; every claim marked "verified" was checked in the referenced code (server at `27772e407`, models at `6626960`, frontend at `7a636358`, mobile at `a501ff18`, desktop at `912133f`, portal app.music-assistant.io at `35607a1`).
+Status: proposal 2026-10-01. Owner: Marcel van der Veldt. This document is the technical companion of the "Sign in with your own identity provider" epic (music-assistant/backlog#183) on the project board. It is written so it can be fed to an agent for implementation; every claim marked "verified" was checked in the referenced code (server at `27772e407`, its Home Assistant user mapping and Ingress resolution at `ca5a03f96`, models at `6626960`, frontend at `7a636358`, mobile at `a501ff18`, desktop at `912133f`, portal app.music-assistant.io at `35607a1`).
 
 ## Summary
 
@@ -110,11 +110,11 @@ Server paths below are relative to `music_assistant/` in the server repo unless 
 - The Home Assistant provider keeps its state in a dict without a lifetime (`auth_providers.py:546`,
   `:607`), sends no PKCE, uses the redirect URI's origin as `client_id` (`:610`), guesses the Home
   Assistant URL from the redirect host when Home Assistant only reports the supervisor URL
-  (`:587-602`) and silently links by username (`:817-845`) (verified). The auth manager registers
-  it, not the `hass` plugin: `_setup_login_providers` (`auth.py:2086`) runs during webserver setup,
-  before any provider is loaded, so the provider only appears through `_sync_ha_oauth_provider`
-  (`auth.py:2117`), which `get_login_providers` calls on every listing (`auth.py:966-969`)
-  (verified).
+  (`:587-602`) and silently links by username (`get_or_create_ha_user`, shared with the ingress
+  path since server#6657) (verified). The auth manager registers it, not the `hass` plugin:
+  `_setup_login_providers` (`auth.py:2086`) runs during webserver setup, before any provider is
+  loaded, so the provider only appears through `_sync_ha_oauth_provider` (`auth.py:2117`), which
+  `get_login_providers` calls on every listing (`auth.py:966-969`) (verified).
 - Redirect path: `GET /auth/authorize` (`controllers/webserver/controller.py:1171`) returns a JSON
   `authorization_url` whose `redirect_uri` is `{base_url}/auth/callback?provider_id=...`
   (`auth.py:1106`). `GET /auth/callback` (`controller.py:1201`) mints a token (`:1229-1230`) and
@@ -131,9 +131,10 @@ Server paths below are relative to `music_assistant/` in the server repo unless 
 - Tokens are HS256 JWTs (`helpers/jwt_auth.py:39`) with a DB row; short-lived sessions slide to 30
   days with a 90-day cap (`auth.py:76-81`). No refresh tokens, no cookies (verified).
 - Ingress: a second TCP site on the `172.30.32.x` address, port 8094 (`controller.py:364-375`,
-  `constants.py:67`), recognized by socket address only (`helpers/auth_middleware.py:510-543`). The
-  ingress user resolution is duplicated in `auth_middleware.py:120-175` and
-  `websocket_client.py:521-567` (verified).
+  `constants.py:67`), recognized by socket address only (`helpers/auth_middleware.py:510-543`).
+  HTTP requests and websockets resolve the ingress user through one helper, `resolve_ingress_user`
+  in `auth_middleware.py` (server#6651), which maps the Home Assistant user with
+  `get_or_create_ha_user`, the same helper the Home Assistant login uses (server#6657) (verified).
 - Remote app: the WebRTC gateway bridges each data channel to
   `ws://localhost:8095/ws?webrtc_session_id=<id>` (`remote_access/gateway.py:144`, `:819`) and keeps
   its sessions in `WebRTCGateway.sessions` (`gateway.py:193`). The websocket handler reads that query
@@ -260,9 +261,9 @@ the load state set by `mass.py` (`models/provider.py:59`), so the base class use
   methods from `mass.get_providers(ProviderType.AUTH)`. `LoginProvider`,
   `HomeAssistantOAuthProvider`, `_setup_login_providers`' Home Assistant branch and
   `_sync_ha_oauth_provider` are removed. `BuiltinLoginProvider` and `LoginRateLimiter` stay in
-  `helpers/auth_providers.py` as core. `get_ha_user_details` and `get_ha_user_role`
-  (`auth_providers.py:50-123`) stay where they are because the core ingress path uses them
-  (`auth_middleware.py:139-141`, `controller.py:959`).
+  `helpers/auth_providers.py` as core. `get_ha_user_details`, `get_ha_user_role` and
+  `get_or_create_ha_user` stay where they are because the core ingress path uses them
+  (`resolve_ingress_user` in `auth_middleware.py`, `controller.py:959`).
 - `DEVELOPMENT.md` manifest table (`DEVELOPMENT.md:176`) lists `auth` as a type.
 
 **Providers.**
@@ -535,8 +536,10 @@ pre-claim an address that would later auto-link an IdP identity.
 
 Profiles are never rewritten on later logins; only the identity snapshot is. `hass_auth` overrides
 `resolve_user` and keeps today's behaviour (link by HA user id, then by username, then
-self-registration with the HA admin role mapping, profile refresh from HA,
-`auth_providers.py:782-867`), with the enabled check added.
+self-registration with the HA admin role mapping, profile refresh from HA): it calls
+`get_or_create_ha_user(..., allow_create=<auth_allow_self_registration>)` and refuses a disabled
+user with `login_account_disabled` ("User account is disabled", as the Home Assistant login answers
+today) and fails with `login_no_account` when it returns no user.
 
 **Accounts and identities API.**
 
@@ -990,13 +993,13 @@ it.
 
 | bug | where (verified) | fix |
 |---|---|---|
-| `auth/user/providers` returns the builtin row, whose `provider_user_id` is the PBKDF2 password hash | `controllers/webserver/auth.py:1625-1639`; hash stored at `helpers/auth_providers.py:476-477` | leave builtin rows out of the response |
-| `auth/tokens` returns `token_hash` | `auth.py:823-829`; field in models `auth.py:138` | leave the hash out of the response |
+| `auth/user/providers` returns the builtin row, whose `provider_user_id` is the PBKDF2 password hash | `controllers/webserver/auth.py:1625-1639`; hash stored at `helpers/auth_providers.py:476-477` | leave builtin rows out of the response (fixed by [server#6649](https://github.com/music-assistant/server/pull/6649), which returns the builtin row with an empty `provider_user_id` instead) |
+| `auth/tokens` returns `token_hash` | `auth.py:823-829`; field in models `auth.py:138` | leave the hash out of the response (fixed by [server#6649](https://github.com/music-assistant/server/pull/6649), which returns an empty `token_hash` instead) |
 | `PATCH /auth/me` skips the system-user guard and the username checks of `auth/user/update` | `controller.py:1127-1160` versus `auth.py:1550-1551` | route through the same rules, or drop the endpoint |
-| `POST /auth/logout` deletes the token row but leaves its websockets connected | `controller.py:1101-1117` versus `auth.py:1615-1621` | call `disconnect_websockets_for_token` |
-| Home Assistant login of a disabled user: the username path builds the user from the raw row without the enabled check, so a token is minted or `update_user`'s assert fails | `auth_providers.py:817-845`, `auth.py:600` | refuse disabled users with a clear error |
-| Ingress user resolution exists twice | `auth_middleware.py:120-175`, `websocket_client.py:521-567` | one shared helper |
-| Websocket `auth/authorization_url` does not validate `return_url` | `auth.py:1066-1091` versus `controller.py:1184-1188` | validate like the HTTP route |
+| `POST /auth/logout` deletes the token row but leaves its websockets connected | `controller.py:1101-1117` versus `auth.py:1615-1621` | call `disconnect_websockets_for_token` (fixed by [server#6650](https://github.com/music-assistant/server/pull/6650)) |
+| Home Assistant login of a disabled user: the username path builds the user from the raw row without the enabled check, so a token is minted or `update_user`'s assert fails | `auth_providers.py:817-845`, `auth.py:600` | refuse disabled users with a clear error (fixed by [server#6651](https://github.com/music-assistant/server/pull/6651)) |
+| Ingress user resolution exists twice | `auth_middleware.py:120-175`, `websocket_client.py:521-567` | one shared helper (fixed by [server#6651](https://github.com/music-assistant/server/pull/6651); [server#6657](https://github.com/music-assistant/server/pull/6657) also shares the Home Assistant user mapping between Ingress and the Home Assistant login) |
+| Websocket `auth/authorization_url` does not validate `return_url` | `auth.py:1066-1091` versus `controller.py:1184-1188` | validate like the HTTP route (fixed by [server#6650](https://github.com/music-assistant/server/pull/6650)) |
 | Webserver README is out of date: bcrypt instead of PBKDF2, 10-year long-lived tokens, opaque tokens instead of JWTs, a remote OAuth polling flow that does not exist, the provider-id callback | `controllers/webserver/README.md` (lines 59, 64, 68, 185-203, 421-423) | rewrite now (documentation, not a code bug); sub-issue 2 updates it again |
 | Frontend `AuthProviderType.OAUTH_HOMEASSISTANT = "oauth_homeassistant"` while the server sends `homeassistant` | frontend `src/plugins/api/interfaces.ts:1788-1791`, models `auth.py:31-32` | correct the value |
 
