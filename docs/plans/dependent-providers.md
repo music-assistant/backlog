@@ -43,8 +43,9 @@ flow protocol. Older clients keep working unchanged.
 4. No "companions" line on the parent's card: the term is internal and the information is hard
    to phrase for users. The finish screen of the parent's setup carries the dependents with their
    own descriptions instead, and the dependent's card says "Needs <parent>".
-5. The shared media methods become three mixins in `music_assistant/models/` (catalog, discovery,
-   audio stream). No "helper music provider" is extracted (see Architecture, section 2).
+5. The shared media methods become four mixins in `music_assistant/models/media_capabilities.py`
+   (catalog, recommendations, music discovery, audio stream). No "helper music provider" is
+   extracted (see Architecture, section 2).
 6. Board: a standalone epic on the board. Sub-issues are plain issues in the backlog repo, not
    board items.
 
@@ -156,20 +157,27 @@ Nothing changes on the server for this section.
 
 ### 2. Server: capability mixins for the shared media methods
 
-Three plain mixin classes in `music_assistant/models/`, holding the stubs that are duplicated
-today, each stub raising `NotImplementedError` as now:
+Four mixin classes in `music_assistant/models/media_capabilities.py`, holding the stubs that are
+duplicated today, each stub raising `NotImplementedError` as now. Merged as
+music-assistant/server#6667.
 
 | Mixin | Methods | Mixed into |
 |---|---|---|
 | `MediaCatalogMixin` | `search`, `browse`, `get_playlist`, `get_playlist_tracks`, `get_radio`, `get_dynamic_radio_tracks` | Music, Plugin |
-| `DiscoveryMixin` | `get_similar_tracks`, `get_similar_artists`, `get_recommendations`, `get_recommendation_items`, `get_artist_toptracks`, `get_artist_topalbums` | Music, Plugin, Metadata |
-| `AudioStreamMixin` | `get_stream_details`, `get_audio_stream`, `delivers_normalized_audio`, `delivers_crossfaded_audio` | Music, Plugin |
+| `RecommendationsMixin` | `get_recommendations`, `get_recommendation_items` | Music, Plugin, Metadata |
+| `MusicDiscoveryMixin` | `get_similar_tracks`, `get_similar_artists`, `get_artist_toptracks`, `get_artist_topalbums` (item-based) | Metadata, Plugin |
+| `AudioStreamMixin` | `get_stream_details`, `get_audio_stream` | Music, Plugin |
 
 - `MusicProvider`, `PluginProvider` and `MetadataProvider` inherit the mixins and drop their own
-  copies. `resolve_image` moves to `Provider` with return type `str | bytes | None` once the two
-  callers that assume a non-None result are checked. `delivers_normalized_audio` returns
-  `bool | None` on the mixin, the plugin's current contract; the music provider keeps returning a
-  bool.
+  copies. The mixins derive from `Provider`, so a controller variable typed by a capability still
+  carries the provider's identity. `resolve_image` moves to `Provider` with return type
+  `str | bytes | None`.
+- The music provider keeps its own `get_similar_tracks`, `get_similar_artists`,
+  `get_artist_toptracks` and `get_artist_topalbums`: they take provider item ids and keep a
+  different contract from the item-based variants on the mixin. The name "discovery" alone
+  collides with device discovery, hence `MusicDiscoveryMixin`.
+- `delivers_normalized_audio` and `delivers_crossfaded_audio` stay on their classes: a definitive
+  bool on the music provider, an optional hint (`bool | None`) on a plugin.
 - The 14 union casts in the controllers become casts to (or `isinstance` checks against) the mixin.
   The feature check stays the gate, as today; the mixin only gives the methods one home and a
   type.
@@ -200,7 +208,7 @@ Two sub-issues, independent of each other.
 
 1. Frontend: chained setup flows for dependent providers, with the "Needs <parent>" hint.
 2. Server: capability mixins for the media methods shared by music, plugin and metadata
-   providers.
+   providers. Done: music-assistant/server#6667 (music-assistant/backlog#217).
 
 ## Risks and open points
 
