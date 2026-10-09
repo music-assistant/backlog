@@ -1,8 +1,8 @@
 # Stream source selection: technical plan
 
 Status: proposal 2026-10-09. Owner: Marcel van der Veldt. This document is the technical
-companion of the "Play albums from one source and choose which source plays" epic on the
-project board. It is written so it can be fed to an agent for implementation; every claim marked
+companion of the "Play albums from one source and choose which source plays" epic (#260) on
+the project board. It is written so it can be fed to an agent for implementation; every claim marked
 "verified" was checked in the referenced code (server at `30d70995f`, `music-assistant-models`
 1.1.217, frontend `main` of 2026-10-09).
 
@@ -272,7 +272,7 @@ New `controllers/streams/stream_sources.py`, pure and synchronous, no provider c
 
 ```
 tier(c)   = quality_tier(c.mapping.audio_format)
-score(c)  = c.mapping.audio_format.quality          # no local or in-library bonus here
+score(c)  = c.mapping.quality                       # format score plus today's local/in-library bonus
 pinned(c) = origin is not None and (c.provider.instance_id, c.mapping.item_id)
                                  == (origin.provider_instance, origin.item_id)
 
@@ -281,7 +281,7 @@ key(c) = (
     c.is_streaming                   if mode == prefer_local            else 0,   # 2. local first
     c.provider.instance_id not in preferred,                                       # 3. own accounts
     -tier(c), -score(c),                                                           # 4. quality
-    c.is_streaming, not c.mapping.in_library,                                      # 5. today's bonus
+    c.provider.instance_id != c.mapping.provider_instance,                         # 5. mapped instance first
     c.provider.instance_id, c.mapping.item_id,                                     # 6. deterministic
 )
 ```
@@ -455,15 +455,15 @@ One PR each, in this order; 7 is independent of the others.
 
 | # | issue | sections | size |
 |---|---|---|---|
-| 1 | Models: queue item origin and quality score fixes | 1 | tiny |
-| 2 | Server: one deterministic ranking for stream sources | 4 | medium |
-| 3 | Server: record where a queue item was played from | 2 | medium |
-| 4 | Server: play an album from one source | 3 | large |
-| 5 | Server: source selection settings | 5 | small |
-| 6 | Server: upgrade low-quality sources at playback time | 6 | small |
-| 7 | Server: keep remastered versions apart (opt-in) | 7 | medium |
-| 8 | Frontend: show which source is playing | 8 | small |
-| 9 | Docs: source selection settings and the remaster option | 4 to 7 | small |
+| 1 | #261 Models: queue item origin and quality score fixes | 1 | tiny |
+| 2 | #262 Server: one deterministic ranking for stream sources | 4 | medium |
+| 3 | #263 Server: record where a queue item was played from | 2 | medium |
+| 4 | #264 Server: play an album from one source | 3 | large |
+| 5 | #265 Server: source selection settings | 5 | small |
+| 6 | #266 Server: upgrade low-quality sources at playback time | 6 | small |
+| 7 | #267 Server: keep remastered versions apart (opt-in) | 7 | medium |
+| 8 | #268 Frontend: show which source is playing | 8 | small |
+| 9 | #269 Docs: source selection settings and the remaster option | 4 to 7 | small |
 
 ## Later
 
@@ -477,4 +477,12 @@ One PR each, in this order; 7 is independent of the others.
 
 ## Changes during implementation
 
-None yet.
+- 2026-10-09, #262 (server#6804): the local and in-library bonus keeps today's weight. Within a
+  quality tier the ranking uses `ProviderMapping.quality` (format score plus the +2/+1 bonus)
+  rather than the raw format score, so a local MP3 320 still beats a streaming OGG 320 and a
+  file on disk still beats the same file in Plex; the separate "non-streaming, in-library"
+  tie-break keys are gone. Prefer-local (#265) adds its preference on top.
+- 2026-10-09, #262: one extra key, the mapped instance ranks before a sibling account of the
+  same service standing in for it (keeps today's order instead of alphabetical instance ids).
+- 2026-10-09, #262: a streaming account that maps the item itself is ranked on, and marked
+  unavailable through, its own mapping instead of a higher-quality sibling's mapping.
