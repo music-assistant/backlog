@@ -216,7 +216,15 @@ Server, `controllers/player_queues/`.
   the child's own identity for an `ItemMapping` or provider item; for a library track (the
   filesystem `browse` substitutes those) it is the track's mapping on `folder.provider` whose
   id starts with `folder.item_id + "/"`, else the lowest id on that instance. Children of
-  subfolders keep the folder container.
+  subfolders keep the folder container. When the folder is an album folder (its path is the
+  filesystem album's provider item id, `filesystem_local/__init__.py:3441-3446`) or a disc
+  subfolder of one (`is_disc_dir` in `filesystem_local/helpers.py`, the parent folder), the
+  container is that library album's `ItemMapping` instead; the pins are still the folder's
+  files. `_plays_as_album_track` (`queue_loader.py:419-438`) then also returns True when
+  `origin.container` is an album, so an album folder plays with album loudness like the album
+  itself; the loudness value is a per-file measurement of the mapping that streams
+  (`audio.py:1573-1584`), so no album lookup is needed. `enqueued_media_items` stays as it is, so
+  autoplay seeding and album play credit are unchanged.
 - Album play: section 3 chooses one source instance and pins each track to that instance's
   listed entry.
 - A single track played by URI (library or provider) gets no origin in this version.
@@ -388,9 +396,9 @@ entries and the category. No new config widget.
 
 Track linking defaults and the usage-policy guards; `allowed` (never another account of a
 service the user owns); the `_request_streamdetails` fallback loop and the unavailable-mapping
-marking; stream-limit handling; the `albums.tracks()` output; the same-album crossfade guard and
-album loudness (switching them to `origin.container` is a follow-up); the search and browse
-ordering; provider quality settings.
+marking; stream-limit handling; the `albums.tracks()` output; the same-album crossfade guard
+(switching it to `origin.container` is a follow-up; album loudness gains the origin rule in
+section 2); the search and browse ordering; provider quality settings.
 
 ## Worked examples
 
@@ -486,3 +494,7 @@ One PR each, in this order; 7 is independent of the others.
   same service standing in for it (keeps today's order instead of alphabetical instance ids).
 - 2026-10-09, #262: a streaming account that maps the item itself is ranked on, and marked
   unavailable through, its own mapping instead of a higher-quality sibling's mapping.
+- 2026-10-10, #263: a folder play of an album folder (or a disc subfolder) records the album as
+  the origin container and gets album loudness through `_plays_as_album_track`; folds in the
+  older "give folder plays an album for loudness" task without touching
+  `enqueued_media_items`.
