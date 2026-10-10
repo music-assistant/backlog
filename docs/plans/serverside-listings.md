@@ -252,11 +252,11 @@ Two execution paths, chosen per listing and never mixed:
 music controller, backed by `LISTING_SORT_OPTIONS: dict[ListingType, tuple[SortOptionInfo,
 ...]]` in `listing.py`. The first entry is the listing's default; `default_direction` is per
 listing, so podcast episodes default to `POSITION` descending while playlist tracks default to
-`POSITION` ascending. The proposed table (library rows as in PR 5498):
+`POSITION` ascending. The proposed table (library rows as in PR 5498, with SORT_NAME first as the default):
 
 | listing | options, default first |
 |---|---|
-| `LIBRARY_ARTISTS`, `LIBRARY_PLAYLISTS`, `LIBRARY_RADIOS`, `LIBRARY_PODCASTS`, `LIBRARY_GENRES` | NAME, SORT_NAME, TIMESTAMP_ADDED, TIMESTAMP_MODIFIED, LAST_PLAYED, PLAY_COUNT, FAVORITE_TIMESTAMP, RANDOM, RANDOM_PLAY_COUNT |
+| `LIBRARY_ARTISTS`, `LIBRARY_PLAYLISTS`, `LIBRARY_RADIOS`, `LIBRARY_PODCASTS`, `LIBRARY_GENRES` | SORT_NAME, NAME, TIMESTAMP_ADDED, TIMESTAMP_MODIFIED, LAST_PLAYED, PLAY_COUNT, FAVORITE_TIMESTAMP, RANDOM, RANDOM_PLAY_COUNT |
 | `LIBRARY_ALBUMS` | the above plus YEAR, ARTIST_NAME |
 | `LIBRARY_TRACKS` | the above plus DURATION, ARTIST_NAME |
 | `LIBRARY_AUDIOBOOKS` | the above plus DURATION |
@@ -439,4 +439,17 @@ One PR each, in this order; 4 and 5 can run in parallel after 3, 7 after 2.
 
 ## Changes during implementation
 
-(none yet)
+- 2026-10-10, #274 (server#5498): an unknown legacy `order_by` key raises `InvalidDataError`
+  instead of being silently dropped; every key the web frontend, the mobile app and Home
+  Assistant send to `library_items` is in the legacy map.
+- 2026-10-10, #274: a direction sent with RANDOM or RANDOM_PLAY_COUNT is ignored rather than
+  rejected; a direction without a field applies to the listing default.
+- 2026-10-10, #274: the library listings offer SORT_NAME first, so the UI default matches the
+  server's implicit default and the mobile app; a web user without a saved sort preference sees
+  "Sort name" instead of "Name".
+- 2026-10-10, #274: until the models release with FAVORITE_TIMESTAMP is pinned (part B of the
+  issue), the `favorite_timestamp` legacy keys ride on a separate carrier through the internals
+  and the recommendations' recent-favourites row keeps its legacy key.
+- 2026-10-10, noticed in #274, not fixed there: the msx_bridge "recently played" handlers sort
+  `last_played` ascending (least recently played first); converted faithfully, the fix is a
+  separate PR.
