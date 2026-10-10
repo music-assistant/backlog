@@ -326,4 +326,19 @@ settings and no stored data changes, so no migration.
 
 ## Changes during implementation
 
-None yet.
+- 2026-10-10, #287 (server#6833): the live log level fix covers every logger the streams
+  controller derives (audio, ffmpeg, smart fades), not only the smart fades one. The cross-meter
+  cap is `min(2, tempo ladder)`, so a cross-meter pair more than 20 % apart still gets 1 bar.
+- 2026-10-10, #288 (server#6841): the replay tool lives in the repo as
+  `scripts/smart_fades_replay.py`. It copies the databases with SQLite's backup API, so it can
+  run against a live server, and stops on any planner error other than "not applicable". Random
+  pairs only; same-album pairs were dropped because same-album tracks don't crossfade by default,
+  and "same album" follows playback's rule (the track's own album). `--out-bucket` and
+  `--in-bucket` stay for per-style runs.
+- 2026-10-10, #288: the per-transition DEBUG line ("planned transition: tier=... trigger=...
+  strategy=... source=... bars=... overlap=... bpm=...") replaces the three "shipping ..."
+  lines. The quick fade trigger is checked in the order meter, tempo, beat grid, so tempo is
+  named when both tempo and grid rule out a blend (167 of 208 grid cases were also more than 8 %
+  apart); a blend context whose candidate re-anchors into a quick fade logs the beat grid.
+- Baseline after #287, dev corpus, random @45 s: 79.0 % of fades under 8 s, median 3.9 s;
+  quick fade triggers over shipped quick fades: tempo 2056, meter 242, beat grid 71.
