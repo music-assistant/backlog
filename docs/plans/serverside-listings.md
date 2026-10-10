@@ -450,6 +450,15 @@ One PR each, in this order; 4 and 5 can run in parallel after 3, 7 after 2.
 - 2026-10-10, #274: until the models release with FAVORITE_TIMESTAMP is pinned (part B of the
   issue), the `favorite_timestamp` legacy keys ride on a separate carrier through the internals
   and the recommendations' recent-favourites row keeps its legacy key.
+- 2026-10-10, #275 (server#6848): the API parser turns a JSON `null` into a parameter's
+  default, so a client asks for everything with `limit: 0` (as the genre commands already
+  defined it), not `null`; internally `apply_listing` defaults to no limit.
+- 2026-10-10, #275: `mass.cache` has no in-memory tier, so the listing cache uses the regular
+  sqlite cache store, not persisted across restarts; a listing a provider failed to contribute to
+  is served but not cached.
+- 2026-10-10, #275: `ARTIST_AUDIOBOOKS` offers DURATION instead of YEAR (audiobooks carry no
+  year); in-memory listings only offer fields their items carry, so PLAY_COUNT,
+  RANDOM_PLAY_COUNT, TIMESTAMP_MODIFIED and FAVORITE_TIMESTAMP stay SQL-only.
 - 2026-10-10, noticed in #274, not fixed there: the msx_bridge "recently played" handlers sort
   `last_played` ascending (least recently played first); converted faithfully, the fix is a
   separate PR.
