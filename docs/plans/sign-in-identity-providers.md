@@ -1,14 +1,15 @@
 # Sign in with your own identity provider: technical plan
 
-Status: proposal 2026-10-01. Owner: Marcel van der Veldt. This document is the technical companion of the "Sign in with your own identity provider" epic (music-assistant/backlog#183) on the project board. It is written so it can be fed to an agent for implementation; every claim marked "verified" was checked in the referenced code (server at `27772e407`, its Home Assistant user mapping and Ingress resolution at `ca5a03f96`, models at `6626960`, frontend at `7a636358`, mobile at `a501ff18`, desktop at `912133f`, portal app.music-assistant.io at `35607a1`).
+Status: proposal 2026-10-01, refreshed 2026-10-10. Owner: Marcel van der Veldt. This document is the technical companion of the "Sign in with your own identity provider" epic (music-assistant/backlog#183) on the project board. It is written so it can be fed to an agent for implementation; every claim marked "verified" was checked in the referenced code, last on 2026-10-10 (server `dev` at `5cb60fc5b`, models at `b24cd66`, frontend at `16966299`, mobile at `e22a24d5`, desktop at `87d0b6e`, portal app.music-assistant.io at `caa4a7c`, python client at `952389e`). Line numbers in the Starting point section and in text that changed in the refresh are from those commits; other line numbers are from the first research (server `27772e407`) and may have moved, so look the symbol up.
 
 ## Summary
 
 Music Assistant (MA) keeps its own users and passwords. Households that already run an identity
 provider (IdP) such as Authentik, Authelia, Keycloak or Pocket ID manage a second set of family
 accounts, and the passkeys and two-factor rules of that IdP never reach MA. "Sign in with Home
-Assistant" exists, but it builds its redirect from the server's LAN address, so it breaks on the
-remote app and behind reverse proxies (support#6601, backlog#153).
+Assistant" exists and works over a configured External URL (server#6826, #6849), but without one
+it still breaks on the remote app (support#6601, backlog#153), and it hands the login token back in
+a URL.
 
 This epic turns sign-in methods into providers of a new provider type `auth`. The MVP hardens the
 sign-in flow first (a public URL for redirects worked out like Home Assistant's internal and
@@ -85,7 +86,8 @@ trust stay in the webserver core.
 - Admins can create an account without a password (email required) and can switch password sign-in
   off once an admin has a linked identity. A configuration that would lock everyone out fails open.
 - Sign in with Home Assistant becomes an auth provider on the same hardened flow and works on the
-  remote app and behind a reverse proxy, with zero setup for Home Assistant users.
+  remote app and behind a reverse proxy, with zero setup for Home Assistant users whose Home
+  Assistant has an external or cloud URL. On the remote app it does not need an MA External URL.
 - Nothing in the epic waits for Home Assistant core to ship OIDC.
 - Nothing blocks a later identity provider on the home operating system that also signs people in
   to third-party apps such as Immich.
@@ -96,53 +98,92 @@ Server paths below are relative to `music_assistant/` in the server repo unless 
 
 ### Starting point (verified)
 
-- `AuthenticationManager` (`controllers/webserver/auth.py:117`) owns `auth.db` at schema 5
-  (`auth.py:73`). Tables `settings`, `users` (no email column), `user_auth_providers` with
+- `AuthenticationManager` (`controllers/webserver/auth.py:121`) owns `auth.db` at schema 5
+  (`auth.py:76`). Tables `settings`, `users` (no email column), `user_auth_providers` with
   `UNIQUE(provider_type, provider_user_id)`, `auth_tokens`, `join_codes`, `roles`
-  (`auth.py:1896-1984`). Foreign key cascades never fire because enforcement is off on the
-  connection; the manual delete lists live in `delete_user` (`auth.py:1247-1251`) and
-  `_prune_orphaned_user_rows` (`auth.py:2255-2269`) (verified).
+  (`auth.py:1923-2011`). Foreign key cascades never fire because enforcement is off on the
+  connection; the manual delete lists live in `delete_user` (`auth.py:1270`) and
+  `_prune_orphaned_user_rows` (`auth.py:2311`) (verified).
 - Login providers are plain classes in `controllers/webserver/helpers/auth_providers.py`:
-  `LoginProvider` ABC (`:299`), `BuiltinLoginProvider` (`:365`) and `HomeAssistantOAuthProvider`
-  (`:533`). The builtin provider stores the PBKDF2 hash as `provider_user_id` of a `builtin` row in
-  `user_auth_providers` and verifies a password by looking that row up (`auth_providers.py:428-435`,
-  `:476-477`) (verified).
-- The Home Assistant provider keeps its state in a dict without a lifetime (`auth_providers.py:546`,
-  `:607`), sends no PKCE, uses the redirect URI's origin as `client_id` (`:610`), guesses the Home
-  Assistant URL from the redirect host when Home Assistant only reports the supervisor URL
-  (`:587-602`) and silently links by username (`get_or_create_ha_user`, shared with the ingress
-  path since server#6657) (verified). The auth manager registers it, not the `hass` plugin:
-  `_setup_login_providers` (`auth.py:2086`) runs during webserver setup, before any provider is
-  loaded, so the provider only appears through `_sync_ha_oauth_provider` (`auth.py:2117`), which
-  `get_login_providers` calls on every listing (`auth.py:966-969`) (verified).
-- Redirect path: `GET /auth/authorize` (`controllers/webserver/controller.py:1171`) returns a JSON
-  `authorization_url` whose `redirect_uri` is `{base_url}/auth/callback?provider_id=...`
-  (`auth.py:1106`). `GET /auth/callback` (`controller.py:1201`) mints a token (`:1229-1230`) and
-  renders `helpers/resources/oauth_callback.html` with the JWT embedded (`:1250-1262`), which sends
-  the browser to `return_url?code=<jwt>` via `build_code_redirect_url`
-  (`helpers/redirect_validation.py:109`); external return URLs get a consent step
-  (`controller.py:1238-1247`) (verified). The server's `/login` page (`controller.py:979-995`,
-  `helpers/resources/login.html:193`) hands the web app `/?code=<jwt>` (verified).
-- `base_url` "auto" resolves to the LAN publish IP (`controller.py:215-223`, `:624-626`).
-  `external_url` exists (`controller.py:234-240`) but no auth code reads it (verified by grep).
+  `LoginProvider` ABC (`:378`), `BuiltinLoginProvider` (`:443`) and `HomeAssistantOAuthProvider`
+  (`:613`). The builtin provider stores the PBKDF2 hash as `provider_user_id` of a `builtin` row in
+  `user_auth_providers` and verifies a password by looking that row up. Since server#6678 it hashes
+  for unknown usernames too (`UNKNOWN_USER_ID`, a hashing semaphore), so a wrong username costs as
+  much time as a wrong password (verified).
+- The Home Assistant provider keeps `(return_url, redirect_uri, expires_at)` per state
+  (`auth_providers.py:626`, `:699`). Since server#6842 a pending sign-in lives 10 minutes
+  (`OAUTH_STATE_TTL = 600`), at most 100 are pending (`MAX_OAUTH_STATES = 100`, `:43-44`), expired
+  entries are swept on every start, and a start at the cap is refused with `RateLimited`, which
+  `GET /auth/authorize` answers with HTTP 429. The callback pops the state (single use) and refuses
+  an expired one. The provider sends no PKCE, uses the redirect URI's origin as `client_id`
+  (`:702`, `:737`), guesses the Home Assistant URL from the host of MA's `base_url`
+  (`<scheme>://<host>:8123`, no port on https) when Home Assistant only reports the supervisor URL
+  (`:664-686`, server#6826), and silently links by username (`get_or_create_ha_user`, shared with
+  the ingress path since server#6657) (verified). The auth manager registers it, not the `hass`
+  plugin: `_setup_login_providers` (`auth.py:2113`) runs during webserver setup, before any provider
+  is loaded, so the provider only appears through `_sync_ha_oauth_provider` (`auth.py:2144`), which
+  `get_login_providers` calls on every listing (`auth.py:980`) (verified).
+- Home Assistant itself supports PKCE S256 on its authorize and token endpoints since Home
+  Assistant 2026.10.0 (home-assistant/core#181957, merged 2026-09-26). Stricter validation of the
+  request parameters (home-assistant/core#184255) lands after 2026.10.1. Older versions ignore
+  `code_challenge`, `code_challenge_method` and `code_verifier`. hass-client 1.3.1 cannot send them:
+  `get_auth_url(hass_url, redirect_uri, client_id, state)` and
+  `get_token(hass_url, code, client_id, grant_type)` take no PKCE arguments
+  (`hass_client/utils.py:48-53`, `:80-81`) (verified).
+- Redirect path: `GET /auth/authorize` (`controllers/webserver/controller.py:1163`) and the
+  websocket `auth/authorization_url` return an `authorization_url` whose `redirect_uri` is
+  `{callback_base}/auth/callback?provider_id=...` (`auth.py:1132`). The provider remembers that
+  `redirect_uri` per state, so the token call uses exactly what was sent (server#6826).
+  `AuthenticationManager._get_oauth_callback_base_url(return_url)` (`auth.py:2632-2655`) picks the
+  base: `base_url` when no `external_url` is set; otherwise `external_url` when the return URL's
+  origin is the External URL or `https://app.music-assistant.io` (`APP_MA_HOST`, `constants.py:71`;
+  server#6826), or when the calling websocket has a `webrtc_session_id` query parameter (taken as
+  is) or its `X-Forwarded-Host`/`Host` equals the External URL host
+  (`WebsocketClientHandler.request_host`, `websocket_client.py:121`; server#6849); else `base_url`.
+  Its tests are `test_get_authorization_url_picks_callback_base` and `..._for_app`
+  (`tests/test_webserver_auth.py:1462-1600`). `GET /auth/callback`
+  mints a token and renders `helpers/resources/oauth_callback.html` with the JWT embedded, which
+  sends the browser to `return_url?code=<jwt>` via `build_code_redirect_url`
+  (`helpers/redirect_validation.py`); external return URLs get a consent step. server#6793 removed
+  the page's dead `about:blank` remote branch. The server's `/login` page
+  (`controller.py:1001`, `helpers/resources/login.html`) hands the web app `/?code=<jwt>`
+  (verified).
+- `base_url` "auto" resolves to the LAN publish IP (`controller.py:220`). `external_url`
+  (`controller.py:239`) is validated: empty, or a public http(s) URL without query or fragment and
+  without a `.local` or single-label host (`_is_valid_external_url`, `controller.py:1458`;
+  server#6812). An invalid stored value is cleared at startup. It can still be plain `http://`. It
+  is read by the callback base above, by redirect validation, and by guest, party and quiz links
+  (server#6812) (verified).
 - Redirect validation allows `musicassistant://` and three Home Assistant URLs
-  (`redirect_validation.py:18-26`) and otherwise classifies same-origin, loopback, private IPs and
-  `base_url` as trusted and every other http(s) URL as external (`:29-102`) (verified).
+  (`redirect_validation.py:18-26`) and otherwise classifies same-origin, loopback, private IPs,
+  `base_url` and the External URL (scheme and host must match, server#6826) as trusted and every
+  other http(s) URL as external (verified). Every call site passes `external_url`.
+  `app.music-assistant.io` is not trusted, so today the remote web app gets a consent step and a JWT
+  in an `app.music-assistant.io` URL (verified).
 - Tokens are HS256 JWTs (`helpers/jwt_auth.py:39`) with a DB row; short-lived sessions slide to 30
-  days with a 90-day cap (`auth.py:76-81`). No refresh tokens, no cookies (verified).
-- Ingress: a second TCP site on the `172.30.32.x` address, port 8094 (`controller.py:364-375`,
-  `constants.py:67`), recognized by socket address only (`helpers/auth_middleware.py:510-543`).
-  HTTP requests and websockets resolve the ingress user through one helper, `resolve_ingress_user`
-  in `auth_middleware.py` (server#6651), which maps the Home Assistant user with
-  `get_or_create_ha_user`, the same helper the Home Assistant login uses (server#6657) (verified).
+  days with a 90-day cap. No refresh tokens, no cookies (verified).
+- Ingress: a second TCP site on the `172.30.32.x` address, port 8094 (`constants.py:67`). User
+  headers are trusted only through `is_request_from_ingress_proxy` (`auth_middleware.py:504`,
+  server#6772): the ingress site plus the Supervisor peer `172.30.32.2`. The ingress site alone also
+  serves the Home Assistant integration with the system-user token. HTTP requests and websockets
+  resolve the ingress user through one helper, `resolve_ingress_user` in `auth_middleware.py`
+  (server#6651), which maps the Home Assistant user with `get_or_create_ha_user`, the same helper
+  the Home Assistant login uses (server#6657) (verified).
 - Remote app: the WebRTC gateway bridges each data channel to
-  `ws://localhost:8095/ws?webrtc_session_id=<id>` (`remote_access/gateway.py:144`, `:819`) and keeps
-  its sessions in `WebRTCGateway.sessions` (`gateway.py:193`). The websocket handler reads that query
-  parameter as is (`websocket_client.py:90`) (verified).
+  `<webserver.internal_base_url>/ws?webrtc_session_id=<id>`
+  (`controllers/webserver/remote_access/__init__.py:200`) and keeps its sessions in
+  `WebRTCGateway.sessions` (`remote_access/gateway.py:193`). `internal_base_url`
+  (`controller.py:248`) connects to the configured bind IP when MA binds to one interface, and to
+  loopback otherwise (`_get_internal_connect_ip`, `controller.py:150-161`); `ws://localhost:8095` is
+  only the gateway constructor's default. The websocket handler reads the query parameter as is
+  (`websocket_client.py:97`) (verified).
 - Unauthenticated websocket connections receive no events: regular connections subscribe after the
-  `auth` command (`websocket_client.py:173-177`, `:496`) (verified).
+  `auth` command (verified).
+- The API message log redacts keys ending in `token`, `secret`, `auth` and similar, plus the exact
+  keys `values` and `code` (`helpers/api.py:56`, server#6829). `code_verifier` is not covered yet
+  (verified).
 - Providers: `ProviderType` has `music, player, metadata, plugin, core, audio_analysis` and `unknown`
-  with `_missing_` to UNKNOWN (models `enums.py:792-808`). `ProviderManifest` carries
+  with `_missing_` to UNKNOWN (models `enums.py:796-812`). `ProviderManifest` carries
   `multi_instance`, `builtin`, `allow_disable`, `depends_on` and `self_service` (default `true`)
   (models `provider.py:34-57`). The server's instance union is
   `ProviderInstanceType` (`models/__init__.py:21-23`) (verified).
@@ -154,13 +195,16 @@ Server paths below are relative to `music_assistant/` in the server repo unless 
   loads (`mass.py:337`, `:371-376`) (verified).
 - Models: `AuthProviderType {builtin, homeassistant}` with `_missing_` to BUILTIN (models
   `auth.py:28-37`). The impersonation parser guards against that fallback with an explicit
-  membership check (`auth_middleware.py:340-353`). `API_SCHEMA_VERSION = 84`
-  (`constants.py:51`) (verified).
+  membership check (`auth_middleware.py:334-346`). `API_SCHEMA_VERSION = 86` (`constants.py:51`;
+  85 went to server#6728, 86 to server#5498) (verified).
 - Setup flows: setup data is encrypted at rest (`controllers/config/flows.py:524`, `:790-795`);
-  members with `config.providers.own` may start flows for `self_service` providers
+  since server#6731 encrypted values are replaced by a placeholder in `get_value` and refused as
+  input; members with `config.providers.own` may start flows for `self_service` providers
   (`flows.py:158`, `:242`); the flow owner lives on `SetupFlowAccess` (`flows.py:64-71`), not on
   `SetupFlowContext` (`models/setup_flow.py:113-132`); `SetupSession.callback_url` is built on
   `base_url` (`models/setup_flow.py:186-188`) (verified).
+- The frontend hides the Home Assistant button on the remote app unless `serverInfo.external_url`
+  is set (frontend `src/views/Login.vue:604-613`, frontend#2951) (verified).
 
 ### 1. The `auth` provider type
 
@@ -236,10 +280,10 @@ class AuthorizationRequest(DataClassORJSONMixin):
 | `name` | button label (inherited `Provider.name`, `models/provider.py:199`; the oidc provider overrides it with its `button_label`) |
 | `icon` | mdi name or preset slug, never a URL |
 | `requires_redirect` | `True` for every v1 provider |
-| `uses_pkce` | send PKCE S256 to the IdP (default `True`; `hass_auth` sets `False`) |
+| `uses_pkce` | send PKCE S256 to the IdP (default `True`; `hass_auth` keeps it, see section 2) |
 | `uses_nonce` | send and check a nonce (default `True`; `hass_auth` sets `False`) |
 | `sign_in_available`, `unavailable_reason` | whether the method can be used right now, with a translation key when not |
-| `supports_remote_app` | the method works through `https://app.music-assistant.io/auth/callback/` |
+| `supports_remote_app` | the method works through `https://app.music-assistant.io/auth/callback/`. For `hass_auth` it is dynamic: true only when Home Assistant reports an external or cloud URL through `network/url`, or the configured `hass` URL is public, because the remote browser must reach Home Assistant itself |
 | `provisioning` | `ProvisioningSettings(create_users=False, default_role="user", role_mapping={})` |
 | `async build_authorization_url(pending: PendingLogin) -> str` | the URL the browser opens |
 | `async complete_authorization(pending: PendingLogin, params: Mapping[str, str]) -> ExternalIdentity` | turns the callback parameters into a verified identity; raises `LoginFlowError(translation_key)` |
@@ -326,10 +370,15 @@ class AuthTransport(StrEnum):
 current_auth_transport: ContextVar[AuthTransport]
 ```
 
-Set per websocket command and per HTTP request. REMOTE only when the peer address is loopback and
-the connection's `webrtc_session_id` is a key of `remote_access.gateway.sessions`
-(`gateway.py:193`); the bare query parameter (`websocket_client.py:90`) is never trusted on its
-own. INGRESS from `is_request_from_ingress` (`auth_middleware.py:510`).
+Set per websocket command and per HTTP request. REMOTE only when the peer address is the gateway's
+connect address and the connection's `webrtc_session_id` is a key of
+`remote_access.gateway.sessions` (`gateway.py:193`). The connect address is the host part of
+`webserver.internal_base_url`: loopback, or the bind IP when MA binds to one interface
+(`controller.py:150-161`, `remote_access/__init__.py:200`). A loopback-only check would never see
+REMOTE on an install with a bind IP. The bare query parameter (`websocket_client.py:97`) is never
+trusted on its own; the raw `webrtc_session_id` check of server#6849 (`auth.py:2649-2652`) moves to
+this transport. INGRESS from `is_request_from_ingress_proxy` (`auth_middleware.py:504`,
+server#6772), never from the ingress site alone.
 
 **Pending logins.**
 
@@ -355,8 +404,11 @@ class PendingLogin:
 ```
 
 `PendingLoginStore` lives in memory on the auth manager: TTL 600 s, `pop()` is single use, at most
-512 entries (the oldest is evicted), `drop_provider(instance_id)`. A restart drops every pending
-login, which only costs a retry.
+100 pending; a start beyond that is refused with `RateLimited` (HTTP 429 on `GET /auth/authorize`)
+so real pending logins stay valid; expired entries are swept on start; `drop_provider(instance_id)`.
+A restart drops every pending login, which only costs a retry. This builds on server#6842: the store
+takes over `OAUTH_STATE_TTL`, `MAX_OAUTH_STATES` and their tests from the in-core Home Assistant
+provider.
 
 `AuthorizationCodeStore` holds MA's own one-time codes: the key is `sha256(code)`, TTL 60 s, single
 use, and each entry carries `state`, `user_id`, `purpose`, `client_code_challenge`, `device_name`
@@ -389,9 +441,20 @@ internal and external URL split. Inputs: the transport and the origin of the cur
 | transport | callback base | callback URL |
 |---|---|---|
 | INGRESS | none (the user is already signed in; redirect methods are not offered) | none |
-| REMOTE | `https://app.music-assistant.io` | `https://app.music-assistant.io/auth/callback/` |
+| REMOTE, client sent `code_challenge` and `redirect_target "app"` | `https://app.music-assistant.io` | `https://app.music-assistant.io/auth/callback/` |
+| REMOTE, otherwise (legacy clients send no challenge) | as today (server#6826, #6849): `external_url` when set, else `base_url` | `<base>/auth/callback` |
 | DIRECT, origin host known | the request origin | `<origin>/auth/callback` |
 | DIRECT, otherwise | `external_url` when set, else `base_url` | `<base>/auth/callback` |
+
+The REMOTE split is by "the client sent a challenge". An old web app or mobile app on the remote
+connection keeps the External URL callback of server#6826 and #6849; only a client that sends a
+challenge gets the app callback. For such a client the app callback wins even when an External URL
+is set: it skips the consent step and the JWT in an `app.music-assistant.io` URL, and it does not
+depend on the External URL being reachable from where the user is.
+
+`get_auth_callback_base` replaces `AuthenticationManager._get_oauth_callback_base_url`
+(`auth.py:2632-2655`); its tests (`tests/test_webserver_auth.py:1462-1600`) carry over as the
+legacy cases. Reuse `APP_MA_HOST` (`constants.py:71`) for the app origin.
 
 "Known" means loopback, one of `publish_addresses` (`controller.py:621-623`), the host of
 `base_url` or the host of `external_url`. An unknown origin is never echoed into a redirect URI.
@@ -407,11 +470,27 @@ redirect URI with the same scheme and host as `client_id` without fetching the c
 (`homeassistant/components/auth/indieauth.py` on the home-assistant/core dev branch, read during
 research; verified). The Home Assistant URL comes from Home Assistant's
 `network/url` (external, then cloud, then internal), as `_get_external_ha_url` already does
-(`auth_providers.py:735-752`), else from the configured `hass` URL (`providers/hass/__init__.py:183-188`)
+(`auth_providers.py:790`), else from the configured `hass` URL (`providers/hass/__init__.py:183-188`)
 when it is not the supervisor URL, else `<scheme>://<host of MA external_url or base_url>:8123`
-with a warning. Never from the redirect host. The token call needs no `code_verifier`:
-`hass_client.utils.get_token(hass_url, code, client_id, grant_type)` sends none
-(`hass_client/utils.py:80-81`, hass-client 1.3.1, verified).
+with a warning. Never from the redirect host. Today's code goes straight from `network/url` to the
+`base_url` guess (`auth_providers.py:664-686`); the configured `hass` URL step is new.
+
+The app target only works when the remote browser can reach Home Assistant, so for it the Home
+Assistant URL must be the external or cloud URL from `network/url`, or a configured `hass` URL that
+is public. Without one, `hass_auth` reports `supports_remote_app = False` and the method is
+unavailable on REMOTE with `method_not_on_remote_app`. The internal URL and the `:8123` guess never
+serve the app target.
+
+PKCE on the Home Assistant leg: `hass_auth` sends its own PKCE pair to Home Assistant on every
+sign-in, unconditionally and independent of the client-to-MA challenge. The verifier is
+`PendingLogin.idp_code_verifier`; the authorization URL carries `code_challenge` and
+`code_challenge_method=S256`, and the token call carries `code_verifier`. Home Assistant checks them
+from 2026.10.0 (home-assistant/core#181957); older versions ignore them, so no version check is
+needed. hass-client 1.3.1 cannot send them (Starting point), so `hass_auth` appends the two
+parameters to the URL from `get_auth_url` and posts the token request (`grant_type`, `code`,
+`client_id`, `code_verifier`) to `<ha_url>/auth/token` itself through `mass.http_session`, or a
+hass-client release adds the arguments first. Send only the parameters Home Assistant knows:
+home-assistant/core#184255 validates them strictly after 2026.10.1.
 
 **Start.** `auth/authorization_url` (websocket, `authenticated=False`) and `GET /auth/authorize`
 gain arguments; the response gains fields. Old callers pass only the first two.
@@ -433,7 +512,13 @@ On failure the response keeps today's shape `{"authorization_url": None, "error"
 (`auth.py:1083-1087`). The websocket variant validates `return_url` exactly as the HTTP variant does
 (`controller.py:1184-1188`); `is_allowed_redirect_url` takes an aiohttp request today
 (`redirect_validation.py:29`), so it gets a sibling that takes the origin host. `redirect_target
-"app"` requires a client challenge. `purpose "test"` is internal to the setup flow.
+"app"` is allowed only on REMOTE and requires a client challenge. `purpose "test"` is internal to
+the setup flow. A start beyond the pending cap fails with `RateLimited` (HTTP 429 on the HTTP
+route).
+
+An old server drops the new arguments without an error (non-strict argument parsing,
+`helpers/api.py:213-228`) and answers without `state`. A new client treats a response without
+`state` as the legacy flow (section 5) or gates on the schema version (section 7).
 
 **Callback.** `GET /auth/callback`, plus `POST /auth/callback` for `response_mode=form_post`:
 
@@ -469,10 +554,12 @@ code; the server checks `S256(code_verifier) == client_code_challenge`, complete
 server-side with its own IdP verifier and mints the token. Otherwise `code` must be an entry in
 `AuthorizationCodeStore` with the same `state`, checked against the same challenge. Purpose `link`
 requires the connection's user to be `link_user_id`. Failed exchanges count in a `LoginRateLimiter`
-(`auth_providers.py:125`) keyed per connection like join codes (`auth.py:2582-2593`).
+(`auth_providers.py:204`) keyed per connection like join codes (`auth.py:2582-2593`).
+`code_verifier` joins the API message log redaction (`_SECRET_KEYS`, `helpers/api.py:56`); `code`
+is already in it.
 
-**Backward-compatibility rule.** A request without `code_challenge` behaves as today. New fields are
-additive. Old in-flight logins die with the restart that installs the update, which only costs a
+**Backward-compatibility rule.** A request without `code_challenge` behaves as today, including the
+External URL callback on REMOTE (server#6826, #6849). New fields are additive. Old in-flight logins die with the restart that installs the update, which only costs a
 retry.
 
 ### 3. Accounts, identities and policy (server)
@@ -527,8 +614,9 @@ pre-claim an address that would later auto-link an IdP identity.
    user: insert the identity for that user and return it.
 4. A username never links.
 5. `provisioning.create_users`: create a user. Username from `identity.username`, else the email
-   local part, else `user`, run through `normalize_username` (`auth_providers.py:40`) and
-   de-duplicated with a `-2`, `-3` suffix. Role: the first `role_mapping` entry whose group is in
+   local part, else `user`, run through `normalize_username` (`auth_providers.py:47`),
+   de-duplicated with a `-2`, `-3` suffix, and checked with `_ensure_valid_username` (`auth.py`,
+   server#6668) like every other username. Role: the first `role_mapping` entry whose group is in
    `identity.groups`, else `default_role`; the role must exist (`_ensure_role_exists`,
    `auth.py:2211`) and is never `service`. Display name and avatar from the identity. Email set only
    when verified and not taken. Insert the identity. Mapping is applied at creation only.
@@ -550,7 +638,7 @@ today) and fails with `login_no_account` when it returns no user.
 | `auth/users`, `auth/user` | `users.read` | `User.email`, `has_password`, `login_methods` |
 | `auth/user/identities(user_id=None)` | self, or `users.read` for others | `list[UserIdentity]`, Home Assistant links mapped into the same shape |
 | `auth/user/identity/unlink(identity_id, user_id=None)` | self, or `users.manage` | refused for a self unlink that removes the last way in (no password, identity or passkey left); an admin may, and the result says so |
-| `auth/providers` | none | kept; entries gain additive `name` and `icon` |
+| `auth/providers` | none | kept; entries gain additive `supports_remote_app` (phase 1b), `name` and `icon` |
 | `auth/user/providers`, `auth/user/unlink_provider` | as today | kept as aliases (`alias=True`, `helpers/api.py:151-157`); the `provider_id` argument stays accepted |
 
 `has_password` is the existence of the user's `builtin` row in `user_auth_providers`. The current
@@ -577,9 +665,13 @@ Fail-open at runtime: the effective value is `stored_value or not guard_satisfie
 identity becomes unusable (provider removed or unavailable, admin disabled), password sign-in is
 effectively on again and a warning is logged once per change.
 
-Enforcement lives in `BuiltinLoginProvider.authenticate` (`auth_providers.py:389`), so it covers
+Enforcement lives in `BuiltinLoginProvider.authenticate` (`auth_providers.py:469`), so it covers
 `auth/login` and `POST /auth/login`: when the effective value is off, a correct password for a
-non-admin fails with `password_login_disabled`; admins pass (break-glass).
+non-admin fails with `password_login_disabled`; admins pass (break-glass). The check runs after the
+password hash, so the constant-time shape of server#6678 stays.
+
+New and changed passwords (create without a password, "set a password") go through
+`validate_password` once server#6752 lands.
 
 **`auth/signin_methods`.** Websocket (`authenticated=False`) and `GET /auth/signin_methods`, both
 returning `SignInOptions`. INGRESS returns an empty method list. REMOTE marks methods without
@@ -587,7 +679,8 @@ returning `SignInOptions`. INGRESS returns an empty method list. REMOTE marks me
 fires when a method appears, disappears or changes availability; it reaches authenticated clients
 only (see "Startup gap" under risks).
 
-`API_SCHEMA_VERSION` goes from 84 to 85 in the last foundation PR (sub-issue 3).
+`API_SCHEMA_VERSION` (86 today) bumps to the next free version in the server PR of phase 1b, which
+the mobile app gates on, and again in the last PR of sub-issue 3, which adds commands.
 
 ### 4. OIDC auth provider (server, `providers/oidc/`)
 
@@ -623,8 +716,11 @@ later): `button_label`, `scopes`, `username_claim`, `display_name_claim`, `group
    (`client_id_required`), `client_secret` (optional, public clients use `none`). The token
    endpoint auth method is chosen from `token_endpoint_auth_methods_supported`:
    `client_secret_basic`, then `client_secret_post` when a secret is set, else `none`
-   (`client_auth_unsupported` when nothing fits). The Google preset requires `external_url`
-   (`google_requires_external_url`): Google only accepts https redirect URIs on a public domain.
+   (`client_auth_unsupported` when nothing fits). The Google preset requires an https
+   `external_url` (`google_requires_external_url`): Google only accepts https redirect URIs on a
+   public domain. `_is_valid_external_url` (server#6812) already guarantees a public host, so the
+   preset only adds the https check. A reconfigure keeps the stored `client_secret` when the
+   encrypted-value placeholder comes back (server#6731).
 4. `claims`: scopes (default `openid profile email`, plus `groups` for presets that use it),
    username claim (`preferred_username`), display name claim (`name`), groups claim (`groups`),
    button label (default: preset name, else the issuer host).
@@ -718,6 +814,13 @@ Hand-back rules:
   and always with a visible "Use another way to sign in" escape.
 - Remote mode: the same-tab flow. The pending record holds the remote id; on return the app
   reconnects by that id first and exchanges over the data channel.
+- A response of `auth/authorization_url` without `state` comes from a server that ignored the new
+  arguments (non-strict argument parsing, `helpers/api.py:213-228`); the frontend then uses today's
+  flow. The latest stable frontend on app.music-assistant.io also serves servers one stable release
+  behind, so this fallback is needed.
+- On remote, the Home Assistant button shows when the method reports `supports_remote_app`,
+  replacing the frontend#2951 rule (`Login.vue:604-613`). Against an old server without the field
+  the #2951 rule stays.
 
 **Profile (`src/views/UserProfile.vue`).** New `src/components/profile/LinkedIdentitiesSettings.vue`
 (list, "Link" through a dropdown of unlinked redirect methods with purpose `link`, unlink with
@@ -762,15 +865,20 @@ The page has no app bundle, a strict CSP in a meta tag (GitHub Pages sets no hea
    `code` `^[A-Za-z0-9._~-]{1,2048}$`, `error` `^[a-z_]{1,64}$`; `error_description` is shown as
    text only, cut to 300 characters. Anything else: "This sign-in link is not valid".
 2. `n.` state: `location.replace("musicassistant://auth/callback?" + params)` plus an "Open the app"
-   button with the same link.
+   button with the same link. Android Custom Tabs may block a script-started navigation to a custom
+   scheme without a user gesture; the button covers that case.
 3. A same-origin `window.opener`: `postMessage({type: "ma-external-login", code, state, error},
    location.origin)` and close.
 4. Else `BroadcastChannel("ma-external-login")`: post, wait 400 ms for `{type: "ack", state}`;
    on ack show "You can close this tab".
-5. Else `location.replace("/?" + params)`: the portal root (`src/main.ts`) forwards `code` and
-   `state` to the saved channel build (`/<channel>/?remote_id=<saved>&code=...&state=...`, next to
-   the existing `redirectToFrontend` calls at `main.ts:274` and `:389`), where the Login hand-back
-   finishes the job.
+5. Else, when a pending record `ma.external_login.<state>` exists in this origin's sessionStorage
+   or localStorage, `location.replace` its `returnPath` (a same-origin path only) with `code` and
+   `state` appended. The frontend build runs on the same origin, so the record is readable here.
+   This covers a user who opened `/<channel>/?remote_id=` directly and has no saved portal
+   connection (`broker.ts:71-100`).
+6. Else `location.replace("/?" + params)`: the portal root already forwards every incoming
+   parameter to the channel build (`src/main.ts:388-412`, `broker.ts:355-361`, since portal
+   67414d2), where the Login hand-back finishes the job. No portal root change is needed.
 
 The page never redirects to a URL taken from the query.
 
@@ -784,8 +892,10 @@ The page never redirects to a URL taken from the query.
 (`ui/compose/auth/AuthenticationPanel.kt:102-135`) (verified). Changes:
 
 - `AuthMethod` and `AuthPolicy` models from `auth/signin_methods`, with a fallback mapping from
-  `auth/providers` on servers below schema 85.
-- Schema gate 85 for PKCE and `auth/exchange`; below it the current flow stays.
+  `auth/providers` on servers below the version sub-issue 3 bumps to.
+- Schema gate for PKCE and `auth/exchange`: the version phase 1b bumps to. Below it the current
+  flow stays. An old server would silently drop the new arguments, so the app never relies on the
+  response alone.
 - `Pkce.kt` on cryptography-kotlin, already a dependency (`gradle/libs.versions.toml:49`,
   `:135-136`).
 - The pending record (state, verifier, server id) persisted with a 10-minute TTL so a process death
@@ -800,8 +910,12 @@ The page never redirects to a URL taken from the query.
 
 **Desktop (`music-assistant/desktop-app`, Tauri).** The launcher page navigates the webview to the
 server (`src-tauri/resources/index.html:498`); there is no deep-link plugin, only
-`tauri-plugin-single-instance` (`src-tauri/Cargo.toml:48-49`) whose callback only focuses the window
-(`src-tauri/src/lib.rs:472-480`) (verified). Changes:
+`tauri-plugin-single-instance` (`src-tauri/Cargo.toml:37`) whose callback only focuses the window
+(`src-tauri/src/lib.rs:1349`) (verified). desktop-app#202 (external) proposes a loopback listener
+(RFC 8252 section 7.3) instead of a custom scheme: it opens the system browser with a loopback
+`return_url` and needs no scheme registration. Decide loopback or `musicassistant-desktop://` before
+sub-issue 10 starts; either way the hand-back moves to PKCE and `auth/exchange`, not the JWT in a
+URL. Changes:
 
 - `tauri-plugin-deep-link` with scheme `musicassistant-desktop`, and the single-instance plugin's
   `deep-link` feature so a second launch hands the URL to the running instance.
@@ -816,7 +930,7 @@ server (`src-tauri/resources/index.html:498`); there is no deep-link plugin, onl
 **Apple TV.** Unchanged in v1: password and dashboard code. Sign in on another device is a later
 sub-issue (16).
 
-**Python client (`music-assistant/client`, at `21b5f55`).** Additive only: `generate_pkce_pair()`,
+**Python client (`music-assistant/client`, at `952389e`).** Additive only: `generate_pkce_pair()`,
 `exchange_code(state, code, code_verifier, device_name)`, `get_sign_in_methods()`,
 `get_identities()`, `unlink_identity()`, `create_user(..., password=None, email=None)` next to
 `Auth.create_user` (`auth.py:68`) and `get_user_providers` (`auth.py:104`); `login()` keeps
@@ -948,31 +1062,42 @@ third-party apps such as Immich. Nothing in this epic blocks it.
 
 ## Phasing
 
-MVP: sub-issues 1 to 12. First follow-ups right after the MVP: 13 and 14. Later: 15 to 17.
+MVP: sub-issues 1 to 12, plus phase 1b. First follow-ups right after the MVP: 13 and 14. Later: 15
+to 17.
 
 1. Models: `ProviderType.AUTH`, the auth dataclasses, `User.email`, `has_password`,
-   `login_methods`, `AuthProviderType` additions with `_missing_` to UNKNOWN; release and server pin
-   bump.
-2. Server: the `auth` provider type and the sign-in flow foundation: `AuthProvider` base class,
-   `login_flow.py` stores and PKCE, callback base per transport, the fixed callback URL, `hass_auth`
-   replacing the in-core Home Assistant login, one-time code, `auth/exchange` and
-   `POST /auth/token`, remote completion, `/login` and `/setup` compatibility, state prefixes, error
-   hand-back. Fixes support#6601 and the backlog#153 class for sign-in.
+   `login_methods`, `AuthProviderType` additions with `_missing_` to UNKNOWN,
+   `EventType.AUTH_SIGNIN_METHODS_UPDATED`; release and server pin bump.
+
+**1b.** Home Assistant over Remote Access (can precede 1; see "Phase 1b" below): server flow core
+(pending store, S256, REMOTE, `auth/authorization_url` additions, websocket `auth/exchange`, Home
+Assistant `client_id` for the app target, PKCE on the Home Assistant leg, `supports_remote_app` on
+`auth/providers`, schema bump) on the in-core Home Assistant provider shaped like `AuthProvider`;
+the portal callback page; one frontend PR on the current `Login.vue`; mobile PKCE and `n.`
+hand-back. Closes music-assistant/support#6601.
+
+2. Server: the `auth` provider type and the rest of the sign-in flow foundation on top of 1b:
+   `AuthProvider` base class, `AuthorizationCodeStore`, `ExternalIdentity`, purpose and
+   `client_state`, the callback base for DIRECT, the fixed callback URL, `hass_auth` replacing the
+   in-core Home Assistant login, one-time code, `POST /auth/token`, `/login` and `/setup`
+   compatibility, error hand-back. Fixes the backlog#153 class for sign-in.
 3. Server: accounts, identities and policy: DB v6, the generic resolver and linking rules, accounts
    without a password (email required), identity commands, current password on a self change,
-   policy with guard, fail-open and admin break-glass, `auth/signin_methods`, schema 85.
+   policy with guard, fail-open and admin break-glass, `auth/signin_methods`, schema bump.
 4. Frontend: new login page: parity PRs (logic into `useConnectFlow`, template in shadcn-vue), then
    helpers, sign-in method buttons, PKCE hand-back, `?local=1` and auto-launch.
-5. Remote portal: the callback page in app.music-assistant.io, portal forwarding, frontend remote
-   completion.
+5. Remote portal: the callback page in app.music-assistant.io (built in 1b), verify the portal root
+   forwarding (generic since portal 67414d2), frontend remote completion for every redirect method.
 6. Server: `oidc` auth provider (client, setup flow with presets and the redirect URI listing, tests
    against a fake IdP on a pytest-aiohttp server), then the test sign-in and link step.
 7. Frontend: Settings > Sign-in methods (type `auth` section, account row, policy card) and
    exclusion from the plugin lists.
 8. Frontend: linked identities in the profile, set or change password, admin create without a
    password, email, identities in the edit dialog, sign-in badges in the users table.
-9. Mobile app: methods, PKCE, exchange, schema gate, `n.` hand-back.
-10. Desktop app: system browser and `musicassistant-desktop://` deep link; frontend bridge.
+9. Mobile app: methods, PKCE and exchange on direct connections too, `n.` hand-back for every
+   method (the remote Home Assistant part lands in 1b).
+10. Desktop app: decide loopback or custom scheme (desktop-app#202), system browser and deep link;
+    frontend bridge.
 11. Python client: additive helpers and models bump.
 12. Docs (music-assistant.io): sign-in methods, adding an IdP (per preset, including
     `email_verified` behaviour and the redirect URIs), the remote app, the policy and the escape
@@ -989,6 +1114,74 @@ A separate research issue outside the epic looks at one provider carrying severa
 features, as a possible future provider model. The `auth` type is designed so it can be absorbed by
 it.
 
+### Phase 1b: Home Assistant over Remote Access
+
+Goal: on app.music-assistant.io and in the mobile app over Remote Access, with no External URL,
+"Sign in with Home Assistant" completes. Home Assistant must be reachable from the user's browser,
+so this only works when Home Assistant reports an external or cloud URL, or the configured `hass`
+URL is public (section 2). It closes music-assistant/support#6601. server#6826 and #6849 already
+fix the case with an External URL; 1b removes the need for one and keeps the login token out of the
+URL on the new path.
+
+It can land before sub-issue 1 because it needs no models change. Throwaway stays small: the
+in-core `HomeAssistantOAuthProvider` gets the `AuthProvider` method shapes now
+(`build_authorization_url(pending)`, `complete_authorization(pending, params)`), so `hass_auth`
+later moves the code as is; `AuthTransport` and `get_auth_callback_base` are final from day one;
+the frontend helpers are final and only the template lines in the old `Login.vue` are redone in the
+rebuild; `supports_remote_app` on `auth/providers` stays valid once `auth/signin_methods` exists.
+
+**Server (part of sub-issue 2).**
+
+1. `login_flow.py`: `PendingLoginStore` (builds on server#6842: TTL 600 s, single use, refused at
+   the cap), the S256 check, state prefixes `w.` and `n.`. Not needed yet: `AuthorizationCodeStore`
+   (the app target exchanges the IdP code itself), `ExternalIdentity`, `purpose`, `client_state`.
+2. `AuthTransport` with the validated REMOTE detection (section 2), replacing the raw
+   `webrtc_session_id` check of server#6849.
+3. `auth/authorization_url` gains `code_challenge`, `code_challenge_method` and `redirect_target`.
+   `redirect_target "app"` is allowed only on REMOTE and requires a challenge. The response gains
+   `state` and `expires_at`. On this target the callback is
+   `https://app.music-assistant.io/auth/callback/` and the Home Assistant `client_id` is
+   `https://app.music-assistant.io`. Every other request keeps today's callback, including the
+   `?provider_id=` query.
+4. PKCE on the Home Assistant leg (section 2), on every Home Assistant sign-in.
+5. `auth/exchange` over the websocket only (no `POST /auth/token` yet): the S256 check against the
+   client challenge, the Home Assistant token call with the stored `client_id`, `redirect_uri` and
+   Home Assistant verifier, then `get_or_create_ha_user` and the disabled check, then the token.
+   Failures count in a `LoginRateLimiter`. `code_verifier` joins the log redaction.
+6. `supports_remote_app` as an additive key on the `auth/providers` entries, dynamic for Home
+   Assistant (section 1).
+7. `API_SCHEMA_VERSION` bump (the mobile gate).
+8. No challenge: server#6826 and #6849 behaviour exactly, including the External URL on remote.
+
+Not part of 1b: the `AuthProvider` base and the `hass_auth` move, `/auth/callback` changes, the
+`/login` and `/setup` rules, `POST /auth/token`, all of sub-issue 3.
+
+**Portal (part of sub-issue 5).** `public/auth/callback/index.html` with the CSP and shape checks of
+section 6: the `n.` forward to `musicassistant://auth/callback`, then the opener, then
+BroadcastChannel, then the pending record's `returnPath`, then the portal root. The root forwarding
+is already in place.
+
+**Frontend (parts of sub-issues 4 and 5), one PR on the current `Login.vue`.** `helpers/pkce.ts`,
+`helpers/external_login.ts`, the `startAuthorization` and `exchangeAuthCode` wrappers. On remote,
+the Home Assistant start passes `redirect_target "app"` and a challenge. The hand-back runs before
+any stored-token login: reconnect by the stored remote id, then `auth/exchange`. The length-8 rule
+is guarded so a `code` with a matching pending `state` is never stored as a token. The Home
+Assistant button on remote shows when `supports_remote_app` is true, else the frontend#2951 rule.
+A response without `state` means an old server: use today's flow. Land or close frontend#2896 and
+frontend#2617, which also edit `Login.vue`, first.
+
+**Mobile (part of sub-issue 9).** `Pkce.kt`, the pending record persisted with a 10-minute TTL,
+`OAuthCallback` reading `code` and `state`, `auth/exchange`, and on remote `redirect_target "app"`
+behind the schema gate. Direct (LAN) logins stay on the legacy flow in 1b, because the server's
+`/auth/callback` one-time code is not part of it. Coordinate with mobile-app#809, which edits
+`AuthenticationPanel.kt`.
+
+**Tests.** Server: the store (TTL, single use, refused at the cap), S256, REMOTE detection with a
+loopback and a bind-IP connect address, the callback base split by challenge, Home Assistant
+`client_id` and PKCE per target, exchange failures and rate limiting, the legacy cases unchanged.
+Frontend: the `pkce` RFC 7636 vector, `external_login` store and strip, the old-server fallback.
+Device tests: the iOS standalone PWA and the Android Custom Tabs hand-off to the app.
+
 ### Prerequisite neutral bug-fix PRs (outside the epic, now)
 
 | bug | where (verified) | fix |
@@ -1000,8 +1193,9 @@ it.
 | Home Assistant login of a disabled user: the username path builds the user from the raw row without the enabled check, so a token is minted or `update_user`'s assert fails | `auth_providers.py:817-845`, `auth.py:600` | refuse disabled users with a clear error (fixed by [server#6651](https://github.com/music-assistant/server/pull/6651)) |
 | Ingress user resolution exists twice | `auth_middleware.py:120-175`, `websocket_client.py:521-567` | one shared helper (fixed by [server#6651](https://github.com/music-assistant/server/pull/6651); [server#6657](https://github.com/music-assistant/server/pull/6657) also shares the Home Assistant user mapping between Ingress and the Home Assistant login) |
 | Websocket `auth/authorization_url` does not validate `return_url` | `auth.py:1066-1091` versus `controller.py:1184-1188` | validate like the HTTP route (fixed by [server#6650](https://github.com/music-assistant/server/pull/6650)) |
-| Webserver README is out of date: bcrypt instead of PBKDF2, 10-year long-lived tokens, opaque tokens instead of JWTs, a remote OAuth polling flow that does not exist, the provider-id callback | `controllers/webserver/README.md` (lines 59, 64, 68, 185-203, 421-423) | rewrite now (documentation, not a code bug); sub-issue 2 updates it again |
-| Frontend `AuthProviderType.OAUTH_HOMEASSISTANT = "oauth_homeassistant"` while the server sends `homeassistant` | frontend `src/plugins/api/interfaces.ts:1788-1791`, models `auth.py:31-32` | correct the value |
+| Webserver README is out of date: bcrypt instead of PBKDF2, 10-year long-lived tokens, opaque tokens instead of JWTs, a remote OAuth polling flow that does not exist, the provider-id callback | `controllers/webserver/README.md` (lines 59, 64, 68, 185-203, 421-423) | rewrite now (documentation, not a code bug); sub-issue 2 updates it again (done by [server#6786](https://github.com/music-assistant/server/pull/6786)) |
+| Frontend `AuthProviderType.OAUTH_HOMEASSISTANT = "oauth_homeassistant"` while the server sends `homeassistant` | frontend `src/plugins/api/interfaces.ts:1801-1804`, models `auth.py:31-32` | correct the value (still open) |
+| `code_verifier` missing from the API message log redaction | `helpers/api.py:56` | add it with `auth/exchange` (phase 1b) |
 
 ## Risks and open points
 
@@ -1032,6 +1226,12 @@ it.
   named like an MA user still gets that account. Documented.
 - **iOS standalone PWA.** The hand-off to Safari and back needs a device test with Home Assistant,
   Authentik and Google before sub-issue 4 closes.
+- **Android Custom Tabs.** A script-started navigation to `musicassistant://` without a user gesture
+  may be blocked. The portal page's "Open the app" button covers it; an Android device test runs
+  next to the iOS one, first in phase 1b.
+- **Home Assistant reachability on remote.** The remote browser talks to Home Assistant directly.
+  Without an external or cloud URL in Home Assistant (or a public configured `hass` URL), Home
+  Assistant sign-in is not offered on the remote app.
 - **`Provider.available` name clash** handled by `sign_in_available` on the base class.
 - **Safe mode** has no Home Assistant button because `hass` is not loaded there; password sign-in
   remains.
@@ -1045,8 +1245,8 @@ it.
 
 ## Verification
 
-- Server: `tests/controllers/webserver/test_login_flow.py` (store TTL, single use and eviction;
-  S256; the callback base matrix per transport and origin; Home Assistant `client_id` per target;
+- Server: `tests/controllers/webserver/test_login_flow.py` (store TTL, single use and refusal at
+  the cap; S256; the callback base matrix per transport and origin; Home Assistant `client_id` per target;
   `hass_auth` following `hass` load and unload; the legacy path byte-identical to today; code path
   failures; remote completion; rate limiting), next to the existing `test_auth_callback.py` and
   `test_ingress_auth.py`. Migration from a v5 fixture run twice. The linking matrix against a fake
@@ -1057,7 +1257,7 @@ it.
   `pytest -n auto --dist loadfile` and `pre-commit run --all-files`.
 - End to end: Pocket ID or Authentik in Docker against a scratch MA instance on the direct LAN
   address, on a configured external URL and on the remote app through the portal callback; Home
-  Assistant login through the remote app; a passkey on the remote app; Apple and Google through the
+  Assistant login through the remote app (web and mobile, Android and iOS); a passkey on the remote app; Apple and Google through the
   relay's staging; the mobile app through the `n.` hand-back; the desktop deep link on macOS,
   Windows and Linux.
 - Frontend: the vitest suites of section 5; screenshots in every UI PR.
