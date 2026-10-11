@@ -867,15 +867,17 @@ The page has no app bundle, a strict CSP in a meta tag (GitHub Pages sets no hea
 2. `n.` state: `location.replace("musicassistant://auth/callback?" + params)` plus an "Open the app"
    button with the same link. Android Custom Tabs may block a script-started navigation to a custom
    scheme without a user gesture; the button covers that case.
-3. A same-origin `window.opener`: `postMessage({type: "ma-external-login", code, state, error},
-   location.origin)` and close.
-4. Else `BroadcastChannel("ma-external-login")`: post, wait 400 ms for `{type: "ack", state}`;
-   on ack show "You can close this tab".
-5. Else, when a pending record `ma.external_login.<state>` exists in this origin's sessionStorage
-   or localStorage, `location.replace` its `returnPath` (a same-origin path only) with `code` and
-   `state` appended. The frontend build runs on the same origin, so the record is readable here.
-   This covers a user who opened `/<channel>/?remote_id=` directly and has no saved portal
-   connection (`broker.ts:71-100`).
+3. When this tab's sessionStorage holds the pending record `ma.external_login.<state>`, this tab
+   started the sign-in: `location.replace` its `returnPath` (a same-origin path only) with the result
+   appended. Checking this first keeps another open app tab from taking the code through the
+   localStorage mirror.
+4. Else `BroadcastChannel("ma-external-login")`: post `{type: "ma-external-login", state, code}` or
+   `{type, state, error, error_description}`, wait 400 ms for `{type: "ack", state}`; on ack try
+   `window.close()` and show "You can close this tab". An app tab acks only a state in its own
+   sessionStorage. No `window.opener` step: the channel already reaches a same-origin opener.
+5. Else, when the localStorage mirror of the pending record exists, `location.replace` its
+   `returnPath` the same way. This covers an IdP that opened a new tab, and a user who opened
+   `/<channel>/?remote_id=` directly and has no saved portal connection (`broker.ts:71-100`).
 6. Else `location.replace("/?" + params)`: the portal root already forwards every incoming
    parameter to the channel build (`src/main.ts:388-412`, `broker.ts:355-361`, since portal
    67414d2), where the Login hand-back finishes the job. No portal root change is needed.
@@ -1157,8 +1159,8 @@ Not part of 1b: the `AuthProvider` base and the `hass_auth` move, `/auth/callbac
 `/login` and `/setup` rules, `POST /auth/token`, all of sub-issue 3.
 
 **Portal (part of sub-issue 5).** `public/auth/callback/index.html` with the CSP and shape checks of
-section 6: the `n.` forward to `musicassistant://auth/callback`, then the opener, then
-BroadcastChannel, then the pending record's `returnPath`, then the portal root. The root forwarding
+section 6: the `n.` forward to `musicassistant://auth/callback`, then the tab's own pending record,
+then BroadcastChannel, then the localStorage mirror, then the portal root (app.music-assistant.io#4). The root forwarding
 is already in place.
 
 **Frontend (parts of sub-issues 4 and 5), one PR on the current `Login.vue`.** `helpers/pkce.ts`,
