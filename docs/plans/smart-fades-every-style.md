@@ -316,7 +316,7 @@ place a transition.
 | 4 | #290 Server: segue for tracks that can't be beatmatched, with the drum clash check | Clash checks, Segue | large |
 | 5 | #291 Server: stretch only where it helps | Stretch only where it helps | tiny |
 | 6 | #292 Server: filter out and echo out | Dressed short transitions | medium |
-| 7 | #293 Server: phrase-aware placement and mixing in the loud part | Phrase-aware placement | large |
+| 7 | #293 Server: phrase-aware placement and mixing in the loud part (closed after measuring) | Phrase-aware placement | - |
 | 8 | #294 Docs: transition styles | all | small |
 
 ## Not in this epic
@@ -376,3 +376,14 @@ settings and no stored data changes, so no migration.
   (about twice chance) but a weak phrase grid, so they become soft candidates, first of all
   ending a fade on the boundary 1 to 2 bars after today's anchor, only on tracks with a coherent
   phrase phase. A sharper detector from harmony and timbre features is not in this epic.
+- 2026-10-11, #293 closed after measuring: the boundary anchor changes no shipped
+  transition. With segues, protective and trim-closing anchors, 96 % of shipped fades already end
+  later than the default anchor and 73 to 76 % end at the audible end; the detector needs 4 bars
+  after a boundary, so the last one it finds sits 3.8+ bars before the audible end in 95 % of
+  tails. Replay of 3000 random pairs per corpus: 0 of 5953 shipped transitions have a boundary
+  after their anchor. Ending the fade on an earlier boundary instead fails a policy in 78 to 82 %
+  of cases and, where it passes, cuts 10 to 13 s more audible material and never wins. The
+  phrase-phase gate changes none of this. Mixing inside the loud part: a 16-bar vocal-free,
+  steady run before the anchor exists in 2 to 3 % of transitions (house 8 %, pop and soul about 0).
+  Phrase placement and mixing in the loud part are dropped from this epic; sharper section
+  detection stays under "Later" on the epic.
