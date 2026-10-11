@@ -322,7 +322,8 @@ place a transition.
 ## Not in this epic
 
 Stretching the incoming track over larger tempo gaps, stem separation, riser or reverb effects,
-per-genre rules, user-editable transitions, Smart Shuffle ordering by segue quality. No new
+per-genre rules, user-editable transitions, Smart Shuffle ordering by segue quality, a phrase
+detector from harmony and timbre features (new stored analysis). No new
 settings and no stored data changes, so no migration.
 
 ## Changes during implementation
@@ -374,4 +375,4 @@ settings and no stored data changes, so no migration.
 - 2026-10-10, #293: section boundaries from the stored band energy are real section changes
   (about twice chance) but a weak phrase grid, so they become soft candidates, first of all
   ending a fade on the boundary 1 to 2 bars after today's anchor, only on tracks with a coherent
-  phrase phase. Harmony and timbre features for a sharper detector go to "Later".
+  phrase phase. A sharper detector from harmony and timbre features is not in this epic.
