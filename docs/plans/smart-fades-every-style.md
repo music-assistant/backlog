@@ -346,3 +346,32 @@ settings and no stored data changes, so no migration.
   segue, where they decide how long a segue may run.
 - Baseline after #287, dev corpus, random @45 s: 79.0 % of fades under 8 s, median 3.9 s;
   quick fade triggers over shipped quick fades: tempo 2056, meter 242, beat grid 71.
+- 2026-10-10, #290 (server#6861): the drum clash check judges segues only, so no transition got
+  shorter before dressed transitions existed; pairs that can be beatmatched keep their blend (a
+  segue never replaces a surviving blend, in either pass). Found while testing: no segue when both
+  decks' vocal masks read as singing throughout (the vocal guard abstains there, and real songs
+  shipped long overlaps with both voices); a side plays without a fade only while the overlap
+  stays inside the quiet material, a longer overlap fades equal-power on both sides; the long
+  15 s blend only between two near-instrumental decks (it hit 12 % of all transitions with the
+  broader rule); segue points snap to detected downbeats only. The weighting of both clash
+  checks stays `4p(1-p)`. Replay: fades under 8 s 79 % to 53 %, median 3.9 s to 7.7 s; live
+  run on the dev server: 23 transitions, 17 segues, no errors.
+- 2026-10-11, #291 (server#6864): the stretch is chosen after selection, not inside the
+  factory: a ramped blend whose overlap has no kick on one deck ships unstretched, but only when
+  that build still has no kick there and passes every policy. The stretch window does not count:
+  a beatless breakdown before a kicked overlap keeps its ramp, because two unmatched kicks in the
+  overlap flam. About half of the ramped blends drop a stretch they didn't need; no transition
+  loses bars (seconds move by the at most 8 % the stretch added).
+- 2026-10-11, #292 (server#6867): a dressed transition replaces a winning cut only when that cut
+  stacks two kicks for more than a beat and a dressed candidate survives; the style that suits
+  the gap wins when it survives (filter out 8 to 20 %, echo out above 20 % and across meters),
+  the other is the fallback; the 4-bar filter out is allowed although its measured kick overlap
+  can exceed the cut's (the sweep thins the kick); in the rescue pass a dressed transition may
+  ship instead of the plain 8 s fallback; dressed transitions also end on the cut's own anchors;
+  an echo out's cut needs a beat before it and the next track needs a first downbeat close
+  to its start to drop in on; the two audible taps (0.5, 0.25) repeat the beat before the cut
+  in the vocal collision check; the echo out's mix runs through a -0.5 dB limiter.
+- 2026-10-10, #293: section boundaries from the stored band energy are real section changes
+  (about twice chance) but a weak phrase grid, so they become soft candidates, first of all
+  ending a fade on the boundary 1 to 2 bars after today's anchor, only on tracks with a coherent
+  phrase phase. Harmony and timbre features for a sharper detector go to "Later".
