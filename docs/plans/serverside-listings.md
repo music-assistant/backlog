@@ -454,11 +454,27 @@ One PR each, in this order; 4 and 5 can run in parallel after 3, 7 after 2.
   default, so a client asks for everything with `limit: 0` (as the genre commands already
   defined it), not `null`; internally `apply_listing` defaults to no limit.
 - 2026-10-10, #275: `mass.cache` has no in-memory tier, so the listing cache uses the regular
-  sqlite cache store, not persisted across restarts; a listing a provider failed to contribute to
-  is served but not cached.
+  sqlite cache store; a kept listing outlives a restart until its 15 minutes run out. A listing
+  a provider failed to contribute to is served but not cached.
 - 2026-10-10, #275: `ARTIST_AUDIOBOOKS` offers DURATION instead of YEAR (audiobooks carry no
   year); in-memory listings only offer fields their items carry, so PLAY_COUNT,
   RANDOM_PLAY_COUNT, TIMESTAMP_MODIFIED and FAVORITE_TIMESTAMP stay SQL-only.
+- 2026-10-12, #275 (server#6848, merged as 4a712e6de): concurrent requests for one listing share
+  one assembly, and an invalidation during an assembly keeps it from being stored. Provider tracks
+  of a library album carry an ItemMapping of the album, so a cached listing holds no user's state of
+  it; a mapped source that is not loaded leaves the assembly incomplete (served, not kept);
+  `refresh_item` invalidates the item's listings after its changes. API schema 89.
+- 2026-10-12: frontend#2928 (dmoo500) landed with the typed parameters and sort options per media
+  type; the remaining review points moved into #279. frontend#2961 and server#6906 (OzGav) made the
+  album and playlist Play button send the page's order through the legacy `sort_by`, and aligned
+  `sort_tracks` with the frontend (`name`, `artist` and `album` on the displayed names, `album` keeping
+  disc and track order, `sort_name` added). #278 keeps those semantics when it maps `sort_by` to the
+  typed sort, and #277 gives the pipeline's ALBUM_NAME the album, disc and track order.
+- 2026-10-12: the frontend sub-issues (#279, #280) wait until the server sub-issues have landed and
+  are then split with dmoo500, who plans an ItemsListing refactor. Playlist tracks, podcast episodes
+  and the artist listings keep the 500-item default even though today's web UI loads them once; that
+  gap is accepted for the short while until the frontend pages, and no beta is released from `dev`
+  until the epic is done (nightlies are fine).
 - 2026-10-10, noticed in #274, not fixed there: the msx_bridge "recently played" handlers sort
   `last_played` ascending (least recently played first); converted faithfully, the fix is a
   separate PR.
