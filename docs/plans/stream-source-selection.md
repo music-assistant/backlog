@@ -498,3 +498,9 @@ One PR each, in this order; 7 is independent of the others.
   the origin container and gets album loudness through `_plays_as_album_track`; folds in the
   older "give folder plays an album for loudness" task without touching
   `enqueued_media_items`.
+- 2026-10-12, #263 (server#6872): the pin is hard in the default mode. A playlist, folder or
+  podcast plays from its own source even when a better-quality copy exists elsewhere, so a
+  Spotify playlist track that is also a linked local FLAC now plays from Spotify for users who
+  do not own the Spotify account. The opt-out is #265's "best quality for every track" mode;
+  #266's threshold stays off by default. `API_SCHEMA_VERSION` is bumped with #263 because the
+  server now fills `QueueItem.origin` for clients.
