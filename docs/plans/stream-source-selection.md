@@ -504,3 +504,20 @@ One PR each, in this order; 7 is independent of the others.
   do not own the Spotify account. The opt-out is #265's "best quality for every track" mode;
   #266's threshold stays off by default. `API_SCHEMA_VERSION` is bumped with #263 because the
   server now fills `QueueItem.origin` for clients.
+- 2026-10-13, #264 (server#6958): an album whose tracks are only provider entries (a streaming
+  library album with "import album tracks" off) also plays from the chosen source: the listing
+  keeps every source's own entry per track and the queue gets the chosen source's copy, with the
+  album page's entry as the fallback for a track that source does not have. Album listings are
+  reassembled on play from the providers' own caches; no second cache of the correspondence.
+  `playback_sources_for(mass, user)` serves the enqueue-time choice, since the queue only takes
+  on its playback user once the play is resolved.
+- 2026-10-13, #267 (server#6956): the remaster option uses one rule in track, playlist and
+  album matching: a conflict is one side naming a remaster and the other not, or two different
+  remaster years; two copies with the same release-track id always match; the check runs in
+  strict compares only. The release-track id is read from a dedicated `musicbrainzreleasetrackid`
+  tag key for every format (the `musicbrainztrackid` key holds the recording id for FLAC, OGG
+  and WavPack files without a release-track tag). MusicBrainz track links are verified with a
+  strict compare when the option is on. Setting on or off, library tracks now carry their
+  album's version, so track matching compares editions on both sides: same-edition copies
+  without a shared id now merge, different-edition copies stay apart. Detection relies on the
+  version being in the title, album title or a version tag; plain Picard tags give no signal.
