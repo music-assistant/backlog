@@ -521,3 +521,10 @@ One PR each, in this order; 7 is independent of the others.
   album's version, so track matching compares editions on both sides: same-edition copies
   without a shared id now merge, different-edition copies stay apart. Detection relies on the
   version being in the title, album title or a version tag; plain Picard tags give no signal.
+- 2026-10-14, #265 (server#6978): in "best quality for every track" mode an album track that is
+  not in the library plays the best entry any of the album's sources lists for it, unpinned,
+  ranked with the play-time keys; the album page's single entry would otherwise have won. An
+  audiobook or podcast episode keeps its pin in every mode: that pin exists so playback,
+  progress and resume stay on the account it was started from, not for quality. Follow-up
+  found there: the album source choice drops a household listing of a service the member owns
+  instead of serving it through the member's own account (new sub-issue on the epic).
