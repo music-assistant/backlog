@@ -260,7 +260,7 @@ listing, so podcast episodes default to `POSITION` descending while playlist tra
 | `LIBRARY_ALBUMS` | the above plus YEAR, ARTIST_NAME |
 | `LIBRARY_TRACKS` | the above plus DURATION, ARTIST_NAME |
 | `LIBRARY_AUDIOBOOKS` | the above plus DURATION |
-| `ALBUM_TRACKS` | TRACK_NUMBER, NAME, ARTIST_NAME, DURATION |
+| `ALBUM_TRACKS` | TRACK_NUMBER, NAME, SORT_NAME, ARTIST_NAME, DURATION |
 | `PLAYLIST_TRACKS` | POSITION, TIMESTAMP_ADDED, NAME, ARTIST_NAME, ALBUM_NAME, DURATION |
 | `PODCAST_EPISODES` | POSITION (desc), NAME, DURATION |
 | `ARTIST_TRACKS` | SORT_NAME, NAME, ALBUM_NAME, DURATION |
@@ -528,6 +528,18 @@ One PR each, in this order; 4 and 5 can run in parallel after 3, 7 after 2.
   is flattened to its only library folder), the provider lists them itself only while the
   library holds none of its items; a folder without a name sorts and matches on its
   translation key. The listing cache takes a per-listing expiry.
+- 2026-10-14, #278 (server#7004, merged as 1e873486d, API schema 95): `play_media` takes
+  `sort_field`/`sort_direction`; the deprecated `sort_by` maps once through the legacy map, which
+  gained the play keys `artist`, `album` and `track_number`; an unknown key, or a field the album
+  or playlist listing does not offer, is rejected before anything plays (an unknown key was
+  silently ignored before). Albums sort inside `playback_listing`, so source selection sees
+  the play order; a playlist in its own order keeps the streaming fast path, any other order
+  comes from the paged listing. `sort_tracks` is gone. Album tracks also offer SORT_NAME, since
+  the album page sends it with Play. Until #280 moves the album and playlist pages to the
+  server listing, the play order follows the server's name comparison (punctuation and
+  articles ignored, same-named albums kept apart), so it can differ from the page by a
+  neighbouring track; the redesigned playlist page's main Play button no longer sends its
+  sort at all, which #280 restores with the typed parameters.
 - 2026-10-10, noticed in #274, not fixed there: the msx_bridge "recently played" handlers sort
   `last_played` ascending (least recently played first); converted faithfully, the fix is a
   separate PR.
