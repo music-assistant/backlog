@@ -482,6 +482,21 @@ One PR each, in this order; 4 and 5 can run in parallel after 3, 7 after 2.
   meanwhile; a list longer than a page reshuffles per page there too until #348. dmoo500 took #279 himself with
   frontend#2985 (the ItemsListing loading, paging and legacy filtering moved into a `useItemsListing`
   composable), so #280 builds on that composable.
+- 2026-10-14, #276 (server#6935, merged as abf5d0a45, API schema 92): artist tracks, albums and
+  audiobooks and the genre contents sort by sort name by default (they followed the database or
+  provider order); ranked listings (top items, similar items, discography, appears on) keep the
+  source order. Similar artists and tracks still ask the providers for 25 items and page that
+  list. A mapped source that is not loaded leaves a ranking incomplete, served but not kept, as
+  for album tracks. Not cached on purpose: artist audiobooks (database reads only), discography
+  (the MusicBrainz client caches for days) and track albums (the search keeps complete results
+  itself). `match_provider` keeps its 500 reference candidates, as before. The music quiz draws
+  genre tracks oldest first now that they sort by name by default.
+- 2026-10-14, #279 (frontend#2985, merged as 8e93a8f0c): dmoo500 moved the listing loading,
+  paging, retry and legacy filtering out of `ItemsListing.vue` into a `useItemsListing`
+  composable, which #280 builds on; our fixes on his branch: the default chip, queued reloads
+  keep their clear/refresh flags, the direction follows `supports_direction` only, the lost
+  author comments restored; minimum server schema 86; random hidden on the paged library
+  views until #348.
 - 2026-10-10, noticed in #274, not fixed there: the msx_bridge "recently played" handlers sort
   `last_played` ascending (least recently played first); converted faithfully, the fix is a
   separate PR.
