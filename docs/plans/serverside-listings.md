@@ -436,6 +436,15 @@ One PR each, in this order; 4 and 5 can run in parallel after 3, 7 after 2.
 - Per-user default sort and view preferences stored on the server (discussion 6004).
 - Mobile app: sort options, search and paging for container listings.
 - Library tracks sorted by album name (needs an album join in the SQL path) if asked for.
+- The nine providers that override `browse` and hand the standard library folders back to the
+  default implementation (Spotify, Deezer, Bandcamp, Audible, KION, Pandora, Yandex, and Apple
+  Music and builtin for the folders they do not serve themselves) keep the 500-row bound on
+  those folders; routing them through the SQL page needs a change in those providers or the
+  base class.
+- Library artist listings read every row of the artist on each page before the pipeline;
+  SQL paging where the sort allows it.
+- The PROVIDER sort keys on the instance id; the plan says display name.
+- Stable random paging (#348) also fixes the per-page reshuffle of the in-memory listings.
 - Sort options for recommendation and home rows are out of scope; they are curated lists.
 
 ## Changes during implementation
@@ -509,6 +518,16 @@ One PR each, in this order; 4 and 5 can run in parallel after 3, 7 after 2.
   provider holds; progress ticks stay in the background and keep the listing. The ALBUM_NAME
   sort key is the album name and uri with a disc and track tie-break, so same-named albums stay
   apart; #278 must keep that order for the `album` play key.
+- 2026-10-14, #276 (server#6937, merged as 79b30204a, API schema 94): the five versions
+  listings share one option set and search the providers once (cached); genre tracks and
+  albums take `search` and sort by sort name by default; browse takes the contract with the
+  folder's own order as default, folders first within NAME, the entry back up a level always
+  first and counting toward the page. A streaming service's own folders are cached for 2
+  minutes (live info stays fresh); a provider's standard library folders are read a page at
+  a time from the library in SQL when the provider uses the default browse (also a root that
+  is flattened to its only library folder), the provider lists them itself only while the
+  library holds none of its items; a folder without a name sorts and matches on its
+  translation key. The listing cache takes a per-listing expiry.
 - 2026-10-10, noticed in #274, not fixed there: the msx_bridge "recently played" handlers sort
   `last_played` ascending (least recently played first); converted faithfully, the fix is a
   separate PR.
