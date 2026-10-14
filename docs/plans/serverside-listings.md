@@ -426,7 +426,7 @@ One PR each, in this order; 4 and 5 can run in parallel after 3, 7 after 2.
 | 8 | #280 Frontend: every listing sorts, searches and pages on the server | 9 | large |
 | 9 | #281 Client: listing contract and sort options in the python client | 10 | small |
 | 10 | #282 Docs: the listing contract, sort options and the deprecations | 3, 4, 8 | small |
-| 11 | #348 Server: stable random order across pages | 3, 4 | small |
+| 11 | #348 Server: stable random order across pages (last) | 3, 4 | small |
 
 ## Later
 
@@ -476,9 +476,10 @@ One PR each, in this order; 4 and 5 can run in parallel after 3, 7 after 2.
   and the artist listings keep the 500-item default even though today's web UI loads them once; that
   gap is accepted for the short while until the frontend pages, and no beta is released from `dev`
   until the epic is done (nightlies are fine).
-- 2026-10-14: Random on the paged library views stays hidden (frontend#2985) until a new
-  sub-issue #348 gives the listings a `random_seed` parameter, so every page of one listing load
-  draws from the same order; then the frontend shows Random again. dmoo500 took #279 himself with
+- 2026-10-14: Random on the paged library views stays hidden (frontend#2985) until #348 gives the
+  listings a `random_seed` parameter, so every page of one listing load draws from the same
+  order; #348 is the last step of the epic. Listings served from memory may offer random
+  meanwhile; a list longer than a page reshuffles per page there too until #348. dmoo500 took #279 himself with
   frontend#2985 (the ItemsListing loading, paging and legacy filtering moved into a `useItemsListing`
   composable), so #280 builds on that composable.
 - 2026-10-10, noticed in #274, not fixed there: the msx_bridge "recently played" handlers sort
