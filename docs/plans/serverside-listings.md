@@ -497,6 +497,18 @@ One PR each, in this order; 4 and 5 can run in parallel after 3, 7 after 2.
   keep their clear/refresh flags, the direction follows `supports_direction` only, the lost
   author comments restored; minimum server schema 86; random hidden on the paged library
   views until #348.
+- 2026-10-14, #277 (server#6932, merged as 956914562, API schema 93): `podcast_episodes` has no
+  `favorite` filter (episodes are never favorites); the per-user favourite stamping joins the
+  provider mappings of the listed items in one query, so a provider track that is in the
+  library carries the calling user's own state. Dynamic playlists, the builtin and smart
+  playlists are never cached. A provider that caches its playlist pages itself (Spotify, Qobuz)
+  can make an external edit take longer than 15 minutes to show; a refresh forces a fresh walk,
+  bypassing those caches on every fill is not an option under the usage policy. A final play
+  report on a podcast episode (mark played or unplayed, pause, stop, end) is awaited before the
+  call returns and the cached listing is dropped after it, so the next listing shows what the
+  provider holds; progress ticks stay in the background and keep the listing. The ALBUM_NAME
+  sort key is the album name and uri with a disc and track tie-break, so same-named albums stay
+  apart; #278 must keep that order for the `album` play key.
 - 2026-10-10, noticed in #274, not fixed there: the msx_bridge "recently played" handlers sort
   `last_played` ascending (least recently played first); converted faithfully, the fix is a
   separate PR.
