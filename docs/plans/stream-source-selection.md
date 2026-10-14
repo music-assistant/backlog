@@ -528,3 +528,20 @@ One PR each, in this order; 7 is independent of the others.
   progress and resume stay on the account it was started from, not for quality. Follow-up
   found there: the album source choice drops a household listing of a service the member owns
   instead of serving it through the member's own account (new sub-issue on the epic).
+- 2026-10-14, #350 (server#6993): the album source choice serves a household listing of a
+  streaming service through the member's own account of that service
+  (`playback_instance_for` in `helpers/provider_access.py`), mirroring what
+  `_get_mapping_providers` does per track at play time; a non-streaming listing is never
+  substituted.
+- 2026-10-14, #266 (server#6996): the upgrade search runs when an item's stream details are
+  first resolved, once per queue item, also for the prepared next track (section 6 said
+  "current item only", which the code never did), so the rest of an album upgrades in the
+  background while the previous track plays; one `STREAM_SLOT_MATCH_TIMEOUT` budget per item
+  across services; the search goes on past a poorer match until one reaches the threshold,
+  every match stored unclaimed; a miss is remembered in the cache per track and provider for
+  a day; no search at a stream-limit reselection; a copy of unknown format neither jumps nor
+  triggers a search. Among the copies that jump a below-threshold copy, those reaching the
+  threshold come first in the usual order, then the others closest to it first, so a poorer
+  pinned copy never changes which copy plays. Audiobooks and podcast episodes ignore the
+  threshold, as they keep their pin. The server READMEs for the ranking and the queue item
+  origin were written in this PR rather than in #269.
