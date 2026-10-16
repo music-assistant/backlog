@@ -540,6 +540,17 @@ One PR each, in this order; 4 and 5 can run in parallel after 3, 7 after 2.
   articles ignored, same-named albums kept apart), so it can differ from the page by a
   neighbouring track; the redesigned playlist page's main Play button no longer sends its
   sort at all, which #280 restores with the typed parameters.
+- 2026-10-16, #280 server part (dmoo500's server#7014, merged as 430066a4e, API schema 96):
+  the filters the single paged path still needed: `favorite` on album tracks, artist tracks,
+  artist albums and collections, tri-state like the library listings (True likes, False
+  dislikes) rather than a favorites-only flag, so one parameter name serves every listing;
+  `album_types` on artist albums; `provider_filter` on artist audiobooks; `exclude_item_id` on
+  podcast episodes, so the playing episode stays out of its own "up next" list.
+  `get_collection` takes `search`, `limit` and `offset` and still returns the whole collection
+  when they are omitted; a collection is small, so it is filtered in memory and not cached.
+  The audiobooks of a library author or narrator follow the calling user's music sources now,
+  like the other library listings. frontend#2998 must send `favorite` instead of
+  `favorite_only`.
 - 2026-10-10, noticed in #274, not fixed there: the msx_bridge "recently played" handlers sort
   `last_played` ascending (least recently played first); converted faithfully, the fix is a
   separate PR.
