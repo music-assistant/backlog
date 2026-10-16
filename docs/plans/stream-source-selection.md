@@ -1,6 +1,6 @@
 # Stream source selection: technical plan
 
-Status: proposal 2026-10-09. Owner: Marcel van der Veldt. This document is the technical
+Status: implemented 2026-10-09 to 2026-10-16 (ten sub-issues, see "Changes during implementation"). Owner: Marcel van der Veldt. This document is the technical
 companion of the "Play albums from one source and choose which source plays" epic (#260) on
 the project board. It is written so it can be fed to an agent for implementation; every claim marked
 "verified" was checked in the referenced code (server at `30d70995f`, `music-assistant-models`
@@ -545,3 +545,12 @@ One PR each, in this order; 7 is independent of the others.
   pinned copy never changes which copy plays. Audiobooks and podcast episodes ignore the
   threshold, as they keep their pin. The server READMEs for the ranking and the queue item
   origin were written in this PR rather than in #269.
+- 2026-10-16, #266 (server#6996, merged): two more rules from the review rounds. A match of
+  unknown quality found by the upgrade search (Yandex Music reports no format) is stored for
+  later plays but not used in the selection it was found in, so it cannot block the lossless
+  match that triggered the search. A stand-in account of a streaming service keeps being
+  judged on its sibling's mapping format; the mismatch only exists for two accounts of one
+  service on different quality settings, and the real format is learned on the first stream.
+- 2026-10-16: the user docs page "Which Source Plays" shipped in music-assistant.io#1129
+  (beta branch), with the local-files tagging page pointing to it for two releases of the
+  same album. All ten sub-issues of the epic are done.
