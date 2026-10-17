@@ -551,6 +551,14 @@ One PR each, in this order; 4 and 5 can run in parallel after 3, 7 after 2.
   The audiobooks of a library author or narrator follow the calling user's music sources now,
   like the other library listings. frontend#2998 must send `favorite` instead of
   `favorite_only`.
+- 2026-10-17, #280 server part (dmoo500's server#7050, merged as 21cd81720, API schema 97):
+  count commands next to the artist listings (`artist_tracks_count`, `artist_albums_count`
+  with the album type and favorite filters, `artist_appears_on_count`, `discography_count`),
+  because a paged listing no longer tells a client how many items there are and the artist
+  page needs the totals for its sections. A library artist is counted in SQL with the
+  listing's own filters; a search, or a provider artist, counts the assembled listing from
+  the cache, so the number is what the listing returns. The python client (#281) exposes
+  them too.
 - 2026-10-10, noticed in #274, not fixed there: the msx_bridge "recently played" handlers sort
   `last_played` ascending (least recently played first); converted faithfully, the fix is a
   separate PR.
