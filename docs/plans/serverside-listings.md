@@ -559,6 +559,17 @@ One PR each, in this order; 4 and 5 can run in parallel after 3, 7 after 2.
   listing's own filters; a search, or a provider artist, counts the assembled listing from
   the cache, so the number is what the listing returns. The python client (#281) exposes
   them too.
+- 2026-10-18, #280 (dmoo500's frontend#2998, merged as 31405a171): every detail listing runs
+  on the single paged path of `useItemsListing`, the browser-side sort and filter code is
+  gone, and the album and playlist Play buttons send the listing's typed sort. Our fixes on
+  his branch: hero counts and durations come from a whole-listing fetch again (album,
+  podcast, discography and the Appears On shelves ask for everything with limit 0), with
+  only the latest response counting; the search box stays hidden on small listings; no
+  empty quick-sort row; the artist's library audiobooks keep their like buttons. Two
+  filters the frontend applied itself have no server parameter and are dropped for now:
+  album type on the discography and favorites on artist audiobooks (server follow-up
+  proposed). The legacy `sort_by` paths in the frontend are dead code now and go in a
+  cleanup PR, together with the unused `sort.*` translation keys.
 - 2026-10-10, noticed in #274, not fixed there: the msx_bridge "recently played" handlers sort
   `last_played` ascending (least recently played first); converted faithfully, the fix is a
   separate PR.
