@@ -113,10 +113,16 @@ route is the only one HA picks up without typing.
 
 ### Trust and identity (`providers/mcp_server/auth.py`)
 
-- Internal path: `is_request_from_ingress(request)` is true and the TCP peer is the host itself
+- Internal path: `is_request_from_ingress(request)` is true, the TCP peer is the host itself
   (peer address equals the local socket address, which is what HA core on the host network looks
-  like). Then no token is required and the request runs as the `homeassistant_system` user from
-  `get_homeassistant_system_user`. The Supervisor (`HASSIO_SUPERVISOR_IP`) is deliberately not on
+  like), and the request path is `/mcp/<secret>`: a per-install secret the plugin generates once
+  and stores, which only reaches Home Assistant core through the Supervisor discovery (other
+  add-ons cannot list discoveries). Then no token is required and the request runs as the
+  `homeassistant_system` user from `get_homeassistant_system_user`. The host-peer check alone
+  would trust every process on the host network, including other `host_network` add-ons, and
+  with `_meta` let them act as any linked user; the secret closes that at no cost to the one-click
+  setup (decided 2026-11-05). `POST /mcp` without the secret is the bearer endpoint for everyone,
+  the host included. The Supervisor (`HASSIO_SUPERVISOR_IP`) is deliberately not on
   that list: on this socket it is the Ingress proxy relaying signed-in HA frontend users, so its
   requests go through `get_authenticated_user` like any other and run as the ingress user from the
   `X-Remote-User-*` headers. Any other peer needs a bearer like everywhere else. Refusals log the
@@ -166,12 +172,12 @@ The exact set and wording are settled in the implementation PR; the table is the
 
 ### Provider (`providers/mcp_server/__init__.py`, `manifest.json`, `strings.json`)
 
-- `type: plugin`, `builtin: true`, `allow_disable: true`, `multi_instance: false`, codeowners
-  `@music-assistant`. No requirements.
+- `type: plugin`, `builtin: true`, `allow_disable: true`, `multi_instance: false`, stage
+  `stable`, codeowners `@music-assistant`. No requirements.
 - Config entries: `expose_to_home_assistant` (bool, default true, only meaningful as add-on). Enable
   or disable of the plugin registers or removes the route.
 - Discovery: when loaded as add-on with the option on, the `DiscoveryController` posts
-  `{"service": "mcp", "config": {"url": "http://<HOSTNAME>:8094/mcp"}}` next to the
+  `{"service": "mcp", "config": {"url": "http://<HOSTNAME>:8094/mcp/<secret>"}}` next to the
   `music_assistant` discovery, at startup and on the daily cycle. The returned uuid is kept so a
   disable or unload sends `DELETE /discovery/<uuid>`, which removes the HA entry. A 403 from the
   Supervisor (add-on config not updated yet) is logged once at info level, never as an error.
@@ -215,8 +221,9 @@ no dynamic registration); the 2026-07-28 protocol era.
 
 - The host-peer guard assumes HA core reaches the internal port with the host's own address on the
   `172.30.32.0/23` network. Verified by reading; to be confirmed on the test server before the PR
-  leaves draft. Fallback: accept any peer on the internal socket, which is the trust the HA system
-  token has today.
+  leaves draft. Fallback: rely on the secret path alone, which is still only known to HA core.
+- An impersonated account that an admin disabled must be refused, not silently replaced by the
+  service user; only a missing link falls back (found in review, fixed in the server PR).
 - The Supervisor refuses the `mcp` discovery until the add-on config carries it; installs that
   update the server before the add-on just see an info line.
 - A voice satellite often has no user id in the HA context, so per-user behaviour through HA is
