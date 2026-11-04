@@ -38,7 +38,8 @@ ESPHome Device Builder (`esphome/device-builder` #2733, #2736; `esphome/esphome`
 - Hand-rolled JSON-RPC on aiohttp, no `mcp` runtime dependency. About 600 lines of transport and
   registry, 20 tools. Methods: `initialize`, `ping`, `tools/list`, `tools/call`. GET answers 405.
 - Trust: the request must arrive on the ingress site, and the TCP peer must be loopback or the
-  Supervisor. The public site sits behind the normal bearer middleware.
+  Supervisor. The public site sits behind the normal bearer middleware. (Music Assistant does
+  not copy the Supervisor part: its ingress proxy relays signed-in HA users, see below.)
 - Discovery URL `http://127.0.0.1:<ingress_port>/api/mcp`. The add-on `config.yaml` must list
   `mcp` under `discovery:`, or the Supervisor refuses the post with 403.
 
@@ -76,10 +77,12 @@ route is the only one HA picks up without typing.
    card in the plugin list. The HA discovery post stays in the `DiscoveryController`.
 3. A fixed, hand-written tool set with compact results. No prompts, no resources, no policy layer:
    a tool runs as the request's user and the existing roles, scopes and filters apply.
-4. Toward HA: Supervisor discovery `mcp` with the internal URL, no token on the trusted path. A
-   tool call from HA runs as the `homeassistant_system` service user, or as the HA user when HA
-   sends its user id in `_meta` (small core PR); an unlinked HA user falls back to the service
-   user, never auto-created.
+4. Toward HA: Supervisor discovery `mcp` with the internal URL, no token on the trusted path,
+   which is HA core reaching the internal socket from the host itself. A tool call from HA runs
+   as the `homeassistant_system` service user, or as the HA user when HA sends its user id in
+   `_meta` (small core PR); an unlinked HA user falls back to the service user, never
+   auto-created. The Ingress proxy is not trusted this way; its requests carry the signed-in HA
+   user and are authenticated as such.
 5. OAuth (PKCE plus dynamic client registration) for external clients is phase 2 in its own PR.
    Until then external clients use a long-lived Music Assistant token as bearer.
 6. The community plugin is renamed "MCP Server (Community)" with a description that says it is
@@ -112,14 +115,16 @@ route is the only one HA picks up without typing.
 
 - Internal path: `is_request_from_ingress(request)` is true and the TCP peer is the host itself
   (peer address equals the local socket address, which is what HA core on the host network looks
-  like) or the Supervisor (`HASSIO_SUPERVISOR_IP`). Then no token is required and the request runs
-  as the `homeassistant_system` user from `get_homeassistant_system_user`. Any other peer on the
-  internal socket needs a bearer like everywhere else. Refusals log the peer at debug level so the
-  guard can be verified on a real install.
+  like). Then no token is required and the request runs as the `homeassistant_system` user from
+  `get_homeassistant_system_user`. The Supervisor (`HASSIO_SUPERVISOR_IP`) is deliberately not on
+  that list: on this socket it is the Ingress proxy relaying signed-in HA frontend users, so its
+  requests go through `get_authenticated_user` like any other and run as the ingress user from the
+  `X-Remote-User-*` headers. Any other peer needs a bearer like everywhere else. Refusals log the
+  peer at debug level so the guard can be verified on a real install.
 - Everywhere else: `Authorization: Bearer <token>` through `get_authenticated_user(request)`.
   Missing or invalid: 401 with `WWW-Authenticate: Bearer realm="Music Assistant"`. Phase 2 adds
   `resource_metadata="..."` to that header.
-- Impersonation: on the internal path only, `tools/call` reads `params._meta["<key>"]` with the HA
+- Impersonation: on the tokenless host path only, `tools/call` reads `params._meta["<key>"]` with the HA
   user id (key constant shared with the HA core PR, proposal `home-assistant.io/user_id`),
   resolves it with `resolve_impersonated_user(..., HOME_ASSISTANT, ..., required=False)` and sets
   `impersonated_user` for the call. `_meta` is ignored on the bearer path: there the token is the
