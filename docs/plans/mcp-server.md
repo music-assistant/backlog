@@ -114,8 +114,9 @@ route is the only one HA picks up without typing.
 ### Trust and identity (`providers/mcp_server/auth.py`)
 
 - Internal path: `is_request_from_ingress(request)` is true, the TCP peer is the host itself
-  (peer address equals the local socket address, which is what HA core on the host network looks
-  like), and the request path is `/mcp/<secret>`: a per-install secret the plugin generates once
+  (the peer address is one of this server's own interface addresses; on the host network those
+  are the host's, and HA core shows up with the host's LAN address, not the bridge address, as
+  the live test on HA OS proved), and the request path is `/mcp/<secret>`: a per-install secret the plugin generates once
   and stores, which only reaches Home Assistant core through the Supervisor discovery (other
   add-ons cannot list discoveries). Then no token is required and the request runs as the
   `homeassistant_system` user from `get_homeassistant_system_user`. The host-peer check alone
@@ -219,9 +220,11 @@ no dynamic registration); the 2026-07-28 protocol era.
 
 ## Risks and open points
 
-- The host-peer guard assumes HA core reaches the internal port with the host's own address on the
-  `172.30.32.0/23` network. Verified by reading; to be confirmed on the test server before the PR
-  leaves draft. Fallback: rely on the secret path alone, which is still only known to HA core.
+- The host-peer guard was verified on the test server (HA OS, 2026-11-05): HA core reaches the
+  internal socket with the host's LAN address as peer, so the guard compares the peer against all
+  of the server's own addresses, not the socket address alone. On a 401 HA's client probes four
+  `.well-known` URLs derived from the MCP URL and the webserver would log those paths, so the
+  plugin answers them with a silent 404 to keep the secret out of the log.
 - An impersonated account that an admin disabled must be refused, not silently replaced by the
   service user; only a missing link falls back (found in review, fixed in the server PR).
 - The Supervisor refuses the `mcp` discovery until the add-on config carries it; installs that
