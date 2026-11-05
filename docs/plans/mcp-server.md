@@ -123,7 +123,10 @@ route is the only one HA picks up without typing.
   would trust every process on the host network, including other `host_network` add-ons, and
   with `_meta` let them act as any linked user; the secret closes that at no cost to the one-click
   setup (decided 2026-11-05). `POST /mcp` without the secret is the bearer endpoint for everyone,
-  the host included. The Supervisor (`HASSIO_SUPERVISOR_IP`) is deliberately not on
+  the host included. The secret path is a bridge, not the design: HA's `mcp` client reads only
+  `url` from the discovery and sends no bearer, so the URL is the only carrier available. Once HA
+  core accepts a `token` in the `mcp` discovery (backlog#382), Music Assistant sends its HA system
+  token instead and the secret path and the host check are removed. The Supervisor (`HASSIO_SUPERVISOR_IP`) is deliberately not on
   that list: on this socket it is the Ingress proxy relaying signed-in HA frontend users, so its
   requests go through `get_authenticated_user` like any other and run as the ingress user from the
   `X-Remote-User-*` headers. Any other peer needs a bearer like everywhere else. Refusals log the
