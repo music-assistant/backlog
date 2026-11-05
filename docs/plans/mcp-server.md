@@ -123,7 +123,10 @@ route is the only one HA picks up without typing.
   would trust every process on the host network, including other `host_network` add-ons, and
   with `_meta` let them act as any linked user; the secret closes that at no cost to the one-click
   setup (decided 2026-11-05). `POST /mcp` without the secret is the bearer endpoint for everyone,
-  the host included. The Supervisor (`HASSIO_SUPERVISOR_IP`) is deliberately not on
+  the host included. The secret path is a bridge, not the design: HA's `mcp` client reads only
+  `url` from the discovery and sends no bearer, so the URL is the only carrier available. Once HA
+  core accepts a `token` in the `mcp` discovery (backlog#382), Music Assistant sends its HA system
+  token instead and the secret path and the host check are removed. The Supervisor (`HASSIO_SUPERVISOR_IP`) is deliberately not on
   that list: on this socket it is the Ingress proxy relaying signed-in HA frontend users, so its
   requests go through `get_authenticated_user` like any other and run as the ingress user from the
   `X-Remote-User-*` headers. Any other peer needs a bearer like everywhere else. Refusals log the
@@ -175,9 +178,11 @@ The exact set and wording are settled in the implementation PR; the table is the
 
 - `type: plugin`, `builtin: true`, `allow_disable: true`, `multi_instance: false`, stage
   `stable`, codeowners `@music-assistant`. No requirements.
-- Config entries: `expose_to_home_assistant` (bool, default true, only meaningful as add-on). Enable
-  or disable of the plugin registers or removes the route.
-- Discovery: when loaded as add-on with the option on, the `DiscoveryController` posts
+- No settings. The only config entry is a hidden, encrypted `home_assistant_secret` that stores the
+  per-install secret of the discovery URL; it is storage, not a user choice. Enabling the plugin
+  registers the routes and, as add-on, puts the card in Home Assistant; disabling it removes both
+  (decided 2026-11-05: an "offer to Home Assistant" toggle adds nothing over disabling the plugin).
+- Discovery: when loaded as add-on, the `DiscoveryController` posts
   `{"service": "mcp", "config": {"url": "http://<HOSTNAME>:8094/mcp/<secret>"}}` next to the
   `music_assistant` discovery, at startup and on the daily cycle. The returned uuid is kept so a
   disable or unload sends `DELETE /discovery/<uuid>`, which removes the HA entry. A 403 from the
