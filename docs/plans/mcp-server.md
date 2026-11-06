@@ -135,7 +135,8 @@ route is the only one HA picks up without typing.
   Missing or invalid: 401 with `WWW-Authenticate: Bearer realm="Music Assistant"`. Phase 2 adds
   `resource_metadata="..."` to that header.
 - Impersonation: on the tokenless host path only, `tools/call` reads `params._meta["<key>"]` with the HA
-  user id (key constant shared with the HA core PR, proposal `home-assistant.io/user_id`),
+  user id (`io.home-assistant/user_id`, a reverse-DNS prefix as the MCP spec asks; the same key
+  home-assistant/core#190779 sends, server#7396 aligned the server),
   resolves it with `resolve_impersonated_user(..., HOME_ASSISTANT, ..., required=False)` and sets
   `impersonated_user` for the call. `_meta` is ignored on the bearer path: there the token is the
   user. No tool ever takes a `user` argument.
@@ -205,7 +206,7 @@ guest on a write tool, and the discovery payload including the delete on unload.
    `music_assistant_dev` and `music_assistant_nightly` `config.yaml`. Lands first.
 1. Server: the builtin plugin, transport, tools, discovery, the `_meta` path, the community plugin
    rename, tests.
-2. HA core: the `mcp` integration passes `meta={"<key>": llm_context.context.user_id}` on
+2. HA core: the `mcp` integration passes `meta={"io.home-assistant/user_id": <user id>}` on
    `call_tool` when a user id is present. A few lines in `coordinator.py`.
 3. Server: OAuth authorization server for `/mcp`: `/.well-known/oauth-protected-resource/mcp`,
    `/.well-known/oauth-authorization-server`, `POST /oauth/register` (RFC 7591, public clients),
