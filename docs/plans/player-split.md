@@ -83,10 +83,10 @@ resolves a legacy id wherever a player or queue id is taken. `PlayerState` expos
 migration of #418 maps `unique_id` and the `(DOMAIN, player_id)` device identifier on it.
 *(decided 2026-11-09)* The field is `legacy_ids: list[str]`, empty by default, on the models
 `Player` (one additive models release, safe for old clients and the pinned HA models version),
-exposed on `PlayerState` and persisted on the player record. The server resolves a legacy id once
-at the API boundary: the `api_command` dispatch rewrites the player id and queue id arguments
-before the handler is called, and `get_player` resolves it too. Legacy ids are accepted
-indefinitely. #418's HA migration maps `unique_id` and the device identifier on them.
+exposed on `PlayerState` and persisted on the player record. One resolver (a reverse index of
+legacy id to player id) serves two entry points: the `api_command` dispatch rewrites the player id
+and queue id arguments before the handler is called, and `get_player` applies it for internal
+callers. Legacy ids are accepted indefinitely. #418's HA migration maps `unique_id` and the device identifier on them.
 
 **Three layers.** *(review)* Not merged into one. `PlayerConfig` is what is persisted and edited.
 `Player` is the live object that owns identity, config, the protocol registry, the queue binding
