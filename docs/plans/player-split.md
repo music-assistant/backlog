@@ -126,8 +126,9 @@ a loaded provider advertising `REMOVE_PLAYER` or `REMOVE_GROUP_PLAYER`. A fronte
 same release gates both on the player state instead, or restored players with unloaded providers
 can neither be disabled nor deleted in settings.
 *(decided 2026-11-09)* Every player provider advertises `REMOVE_PLAYER`. The frontend companion PR
-gates settings, enable/disable and delete (groups included) on the player state and is a landing
-dependency of the cutover.
+gates settings, enable/disable and delete (groups included) on the stored player config, with the
+live player state optional (a disabled player has no live object), and is a landing dependency of
+the cutover.
 
 **Config shape.** *(review)* With frozen ids, `players/{id}` is both the player record and the
 native protocol's record, while a player minted after the change has a separate record: two shapes

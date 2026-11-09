@@ -89,8 +89,9 @@ reporting itself a native follower clears the active output (today in
 **Identity.** Frozen: every existing record keeps its id; `legacy_ids` starts empty. Minted: `pl` +
 12 hex (`up` and snapcast's `ma_` are taken). Attach resolves identity as: stored edge of the
 protocol's record, validated against the live veto rules of the player's attached protocols; else
-identifier match against live players (natives only against players without a native protocol, §6f);
-else mint. Known devices never wait. Collect window: only an audio protocol that matches nothing and
+identifier match against live players and the stored identifiers of disabled player records (natives
+only against players without a native protocol, §6f; a match to a disabled player writes the edge and
+creates no object, §2); else mint. Known devices never wait. Collect window: only an audio protocol that matches nothing and
 has no valid hardware MAC yet (ARP pending, address missing) waits, at most today's 15 s
 (`protocol_linking.py:439`), re-matching as identifiers arrive and minting as soon as a hardware MAC is
 in or the window ends; a native protocol mints at once. Re-identification: a protocol matching a
@@ -253,7 +254,8 @@ reported by Sendspin (`is_web_player` `sendspin/player.py:2143`, `is_virtual_pla
 no behaviour yet. Markers: none. No moves.
 
 ### PR 4. The cutover: Player and PlayerProtocol, boot from config, config tree split, universal provider removed
-One PR, commits in this order, each green: (1) model split (`Player` core half, provider half into
+One PR, commits in this order, each reviewable on its own; the suites are green at the PR head
+(commit 1 breaks the providers and tests that commits 6-9 convert): (1) model split (`Player` core half, provider half into
 `models/player_protocol.py` replacing the alias, `__eq__`/`__hash__` per class, `protocol_id`
 rename); (2) controller lifecycle: `_protocols` beside `_players` (`212`), attach / detach /
 remove_protocol / remove replacing `register` (`1715`), `register_or_update` (`1840`), `unregister`
@@ -378,9 +380,10 @@ split into matching (PR 2's module), output selection, grouping translation; 9d 
 as the contract and the unit suites moved onto the harness; 9e the `noqa PLR09xx/C901` hotspots fall
 out of 9a-9c. Model compatibility aliases: outside this sequence. Companion PRs: frontend "gate on
 player state" (lands with PR 4; `player_settings_actions.ts:68-78, 140, 209-219`, `Players.vue:162-167`
-use `api.players[playerId]` instead of `api.getProvider(...)`; without it the settings editor and
-enable/disable are hidden for a player whose provider is unloaded or uninstalled, and delete needs a
-loaded provider advertising the feature; the settings list already works, since
+gate on the stored `PlayerConfig` instead of `api.getProvider(...)`, live state from
+`api.players[playerId]` only where present (a disabled player has none); without it the settings
+editor and enable/disable are hidden for a player whose provider is unloaded or uninstalled, and
+delete needs a loaded provider advertising the feature; the settings list already works, since
 `player_config.ts:14-15` asks `include_unavailable=false`, which after PR 4 only hides session-only
 players); later "merge into…", "remove all unavailable players", and dropping `REMOVE_PLAYER` from
 every provider once the frontend stops asking. HA later: #418 id move on `legacy_ids`; features
@@ -476,9 +479,11 @@ persistence and callbacks stay in `update_state`. `test_player_stays_available_o
 stays a strict xfail through PR 1 because `available` still reads the native's own value.
 
 **(i) Migrations.** Recommendation: one run-once flag per step (`player_split_session_only`,
-`player_split_tree`), set `immediate=True` as `retired_local_audio.py:52, 207` does; backup as a
-prerequisite. Backup: in `_load`, before `migrate()`, when the tree flag is absent, copy the loaded
-file (it can be `.backup`, `config/controller.py:318`) to `settings.json.pre-player-split`; if the
+`player_split_tree`), written into the data by the step and saved with the rest of `migrate()`'s
+result (`config/controller.py:323-324`); backup as a prerequisite. Backup: in `_load`, before
+`migrate()`, when the tree flag is absent and no backup exists yet, copy the loaded file (it can be
+`.backup`, `config/controller.py:318`) to `settings.json.pre-player-split` through a temporary file
+and a rename, so a retry keeps the first backup and a crash leaves no partial one; if the
 copy fails the split steps do not run and startup stops with a clear error (continuing would read
 the new tree from unmigrated data and show no players; see Q1). Session-only step (old shape only):
 candidates are records with provider domain `sendspin`, `player_type` other than `protocol`, no
@@ -502,9 +507,11 @@ no other parent lists it (all 7 empty `up…` wrappers locally are this half-wri
 records (`provider == "universal_player"`, never by type) get `provider` = highest-priority child
 record, wrappers still without a child are deleted with DSP and queue records and added to the
 cleanup list; protocol-typed records with an edge → `player_protocols/{id}` with `player_id` = edge,
-`role` = audio; every player record's provider-owned keys, audio keys and `setup_data` → a same-id
+`role` = audio; every other player record's provider-owned keys, audio keys and `setup_data` → a same-id
 `player_protocols/{id}` with `role` = native (virtual for the sync_group, universal_group and
-auracast domains); `linked_protocol_ids` and `protocol_parent_id` dropped. Repairs in the pass:
+auracast domains); a former `up…` wrapper (stored provider `universal_player` when the step starts)
+gets none, since it has no protocol of its own and a native must still be able to attach to it
+(§6f); `linked_protocol_ids` and `protocol_parent_id` dropped. Repairs in the pass:
 edge to a missing, self or child record → null (unbound, attach re-matches); two protocols of one
 domain on one player → keep the enabled one, else the one with `setup_data`, else the lowest id, null
 the rest (one local parent has three enabled AirPlay children without setup data); a record with an
