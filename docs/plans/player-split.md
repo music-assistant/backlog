@@ -223,6 +223,17 @@ Additional decisions from the review *(review)*:
 - A new player that is disabled by default is registered on the branch for now (see Phase 0
   state). The end state of #415, "no player until the user enables it", restores the early return
   in `register()` and gets a test.
+- *(review)* Branch rule until Phase 3: delete and replace yes, move and rename no. Moving files and
+  renaming on a long-lived branch that merges `dev` regularly creates a conflict on every `dev` PR
+  that touches the same files. Structure work (bucket B of the cleanup) waits for Phase 3 or right
+  after landing; the `PlayerProtocol` rename was the one exception (music-assistant/server#7463).
+- *(review)* The ten migration steps marked "remove after 2.10" (2.10.9 is released) are removed in
+  their own PR into `dev` now, not on the feature branch. A user who upgrades from 2.9.x straight to
+  that release skips them.
+- *(review)* Review rule after the cleanup: the one-time cleanup removes the complexity and
+  fragility; from then on every change to the players core gets a critical review by an AI model
+  against the README scenarios and by a member of the core team. No CODEOWNERS or PR template
+  mechanics; the README and that review are the guardrail.
 
 Defaults for the smaller questions:
 - `PlayerState.provider` for a protocol-only player stays `"universal_player"` until the frontend
@@ -261,6 +272,27 @@ Defaults for the smaller questions:
    the three layers (pure state derivation); the aggregation rules; the re-attach hook; command
    semantics while unavailable; session-only protocols without persisted config; the
    disabled-by-default early return.
+
+   *(review, cleanup)* Delete what the change makes obsolete, on the code it rewrites:
+   - Attach and detach replace `register`, `register_or_update` and `unregister`. Swapping in a
+     replacement instance becomes a detach plus an attach, so the swap logic in
+     `register_or_update` (copying config onto the new instance, re-marking it initialized, the
+     role-change cleanup) goes, and so do the guards that exist only because registration was
+     creation: `_registration_aborted`, the second `_teardown_in_progress` check inside the lock,
+     the "not the registered instance" guard in `signal_player_state_update`, the queue re-create
+     race after an aborted registration, and `_get_online_player`'s "registered again" check.
+   - Enable, disable and remove are controller concerns: drop the default behaviour of
+     `PlayerProvider.on_player_enabled` (re-run discovery after 5 s) and `on_player_disabled`
+     (unregister); a provider gets an optional hook per protocol if it needs one.
+   - If the record split is chosen, protocol configs become real records: the virtual
+     protocol-prefixed and plugin-prefixed config entries (`CONF_PROTOCOL_KEY_SPLITTER`,
+     `CONF_PLUGIN_KEY_SPLITTER`, merged on every read and stripped on every write) become a
+     sub-config returned next to the player config. That removes about a third of
+     `config/players.py` (1,379 lines on `dev`).
+   - Events: write the semantics down (`PLAYER_ADDED` on first sight, `PLAYER_REMOVED` on user
+     removal, `PLAYER_UPDATED` for attach and detach) and plan the removal of the compatibility
+     `PLAYER_CONFIG_UPDATED` emitted on feature changes for the HA integration, together with the
+     HA release that re-evaluates features on `PLAYER_UPDATED` (see Phase 4).
 2. **Audio protocols on players, universal player provider removed** (#416). Universal configs
    become players with the same `up…` ids (idempotent migration that never raises: identify them by
    `provider == "universal_player"`, never by type); takeover becomes attach.
@@ -268,12 +300,92 @@ Defaults for the smaller questions:
    *(review)* Also: protocol re-identification; the collect window and merge policy; the
    identifier veto and the zone identifier; claimed extra instances; native priority; derived
    protocols from config; the migration repairing edges.
+
+   *(review, cleanup)* Delete what the change makes obsolete, on the code it rewrites:
+   - One invariant instead of nine repairs: the edge lives on the protocol record and nowhere
+     else, validated once in the split migration and checked once in the diagnostics dump. Delete
+     the startup repair of parent links (`_repair_protocol_parent_links`), the weekly task that
+     fixes sync group member configs (`_fix_group_member_configs`), the cache recovery of linked
+     protocol ids (`_recover_cached_protocol_links`), the reconciliation of stored protocol ids in
+     the universal provider (`_resolve_stored_protocol_ids`), the eviction of a protocol from
+     other parents (`_evict_protocol_from_other_parents`), and the migrations for self-referential
+     links, orphaned disabled protocol configs, AirPlay Receiver ghost players and the universal
+     config absorption. Eight of the nine repair links or protocol configs; the ghost-player step
+     cleans up identity churn. None has a reason to exist once the parent-side list is gone.
+   - Roles are attributes, not types: delete every place that flips `PlayerType` on a provider
+     object or heals it in config (`_cleanup_player_type_transition`,
+     `_finish_player_type_transition`, `set_player_type`, Sendspin's `restore_bridge_identity` and
+     its PROTOCOL/PLAYER switch, Chromecast's and Squeezelite's PROTOCOL-or-PLAYER decision). A
+     `PlayerProtocol` reports a role; `PlayerType` on the `Player` is player, stereo pair, group,
+     display, visualizer, light or source, never protocol. On `dev` providers set the type in 24
+     places (most once per class; 7 are Sendspin's runtime switches), and Sendspin takes over
+     another player's config in 3.
+   - Identifier matching becomes one pure, table-driven function, with precedence and veto rules
+     in one place and a test per rule. Identifiers become a set of (type, value) pairs instead of
+     one value per type, so a device with two MACs (ARP and reported) is modelled rather than
+     carried in `extra_data["reported_mac"]`. The DLNA provider normalises the Sonos `_MR` suffix,
+     the matcher does not know it. Sibling matching (HEOS through its AirPlay child's identifiers)
+     disappears once the `Player` merges identifiers from every protocol.
+   - Provider-side takeovers go: Sendspin's `_take_over_mac_player`, the Raumfeld room UDN to
+     serial move and the callers of `carry_over_player_config` are replaced by the one
+     re-identification rule in the controller.
+   - Migrations: every protocol-link repair step is removed when the split migration lands, since
+     it supersedes them. `migrations.py` (2,109 lines on `dev`) stays a list of live steps, each
+     with its removal release.
 3. **Cleanup** (#417). `ProtocolBackedPlayer` folded into `Player`, sync_group onto a player
    "protocol for domain X" API, test suites rewritten around attach/detach
    (`test_protocol_linking.py` is 12.7k lines, 28 test files poke `_players`).
 
    *(review)* `_players` is touched by 96 test files on dev today, not 28. The scenario suite below
    is the acceptance gate.
+   *(review: correction)* Checked on `dev`: 25 test files use the private `_players` registry, 8 of
+   them through `players._players`. The 96 counted substring matches, which are mostly the public
+   `all_players` and `iter_players`.
+
+   *(review, cleanup)* Structure work, in Phase 3 or right after landing (branch rule above):
+   - Split the players controller (5,524 lines on `dev`) by concern: registry and lifecycle,
+     commands, volume, power, sleep timer, grouping, announcements and audio sources are already
+     mixins or sections; make them modules with a narrow interface to the registry. Split
+     `protocol_linking.py` (3,379 lines) into matching, output selection and grouping translation.
+   - Grouping as one plan and one executor. Group membership and leader lifecycle are 19 of the 69
+     relevant support issues, and the code is a chain of `_try_group_via_*` fallbacks: about 1,040
+     lines of grouping translation in `protocol_linking.py` plus about 1,100 in the controller's
+     grouping and `set_members` paths. Replace them with a pure `plan_group(leader, members) ->
+     GroupPlan` (which protocol carries each member, who leads, what has to be released) and a
+     single executor that applies a plan. The plan is unit-testable against every scenario without
+     a device.
+   - Locks: a command that cannot take the player lock within 30 seconds runs without it today
+     (`PLAYER_LOCK_TIMEOUT`); only the queue play actions and the next-track handover take it
+     strictly (up to 120 s, then `ResourceBusyError`). Make the timeout fail loudly and give the
+     provider calls it papers over their own timeouts; a silent lock bypass is how two commands end
+     up on one queue.
+   - Timers as state machines: the 5 s clear of the remembered source when idle, the 5 s external
+     source takeover check, the external power off stop delay, the 2 s debounced update of all
+     players, the 0.5 s queue update delay and the 15/45 s protocol evaluation delays. Keep the
+     ones that survive the split as named constants with the reason next to them; move the ones
+     that encode state (source memory, takeover detection, power on in progress) into explicit
+     per-player state with tests.
+   - Model compatibility aliases: the models `Player` (1.1.236) writes 9 compatibility keys on
+     serialisation (`display_name`, `state`, `group_childs`, `extra_data`, `hide_player_in_ui`,
+     `device_info.mac_address`, `device_info.ip_address`, the boolean `powered` marked TEMP
+     2025-03-15, and `group_volume = 0`) and reads 4 back on deserialisation. Pick a minimum client
+     version per consumer (HA integration, python client, mobile app, frontend), announce it, and
+     drop them.
+   - Complexity suppressions: the 10 `noqa PLR09xx/C901` sites in the players, queues and sync
+     group code (12 with `config/players.py` and `migrations.py`; set_members handling, output
+     protocol config entries and the migration runner among them) are the hotspots. The splits
+     above should remove the need for each, not keep the marker.
+   - Test harness: a fake provider and a scenario DSL (attach, detach, report state, assert state
+     and events), so tests go through the public API instead of `_players`;
+     `test_protocol_linking.py` is 12,808 lines. The DSL itself comes first, before Phase 1,
+     because the scenario suite is written in it (see Scenario suite); moving the existing tests
+     onto it is the Phase 3 part.
+   - Documentation as a contract: rewrite the players README as the model spec, covering the three
+     layers, the roles, the invariants (one edge, one native, one per domain, roles are not
+     identity), the matching table, the event semantics, and every scenario of the suite worked
+     out end to end (what attaches, what the state becomes, which events go out, what the user
+     sees), so the README and the tests describe the same cases. The README stays the single place
+     a contributor or a model reads before touching the players core.
 4. **Later, after the release** (#418): move existing players to MA-minted ids together with a
    migration in the Home Assistant integration (HA otherwise drops and recreates the entities).
 
@@ -339,6 +451,9 @@ Reviewed at head `9b7b44fda`; the notes in brackets were checked against that he
 - The frontend already hides unavailable players from the main list; settings and HA show them.
 
 ## Scenario suite *(review)*
+
+*(review, cleanup)* Written in the scenario DSL of the test harness (Phase 3 list), so the fake
+provider and the DSL come first.
 
 Attach/detach acceptance tests, written before Phase 1 and used as the gate for phases 1 and 2:
 several AirPlay receivers on one IP; a multi-zone chassis behind one MAC and IP; a room of three
