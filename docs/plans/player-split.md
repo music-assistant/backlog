@@ -116,6 +116,11 @@ Removing a provider deletes that provider's protocol records; the player is remo
 remain. With it: the removal sweep in `config/providers.py`, `iter_players(provider_filter)`,
 `PlayerProvider.protocols` and the provider unload loop filter on protocol records instead of
 players, and the config translation owner of a player record follows the primary protocol.
+*(review)* The frontend gates on the provider too: `src/helpers/player_settings_actions.ts` hides
+enable/disable when `api.getProvider(config.provider)` is absent, and `playerCanBeDeleted` requires
+a loaded provider advertising `REMOVE_PLAYER` or `REMOVE_GROUP_PLAYER`. A frontend change in the
+same release gates both on the player state instead, or restored players with unloaded providers
+can neither be disabled nor deleted in settings.
 
 **Config shape.** *(review)* With frozen ids, `players/{id}` is both the player record and the
 native protocol's record, while a player minted after the change has a separate record: two shapes
@@ -239,6 +244,12 @@ grouping (about 1,500 lines).
    migration (Sendspin browser/app players and the other session-only types) runs before this boot
    step. A record of a provider that is not installed shows a "provider not installed" reason in
    the UI.
+   *(review)* Prerequisite, in Phase 1: the Home Assistant entity reads
+   `device_info.manufacturer or provider.name` (`entity.py`), so a restored player with an unloaded
+   provider and an empty manufacturer would raise instead of becoming an unavailable entity. The
+   server never publishes an empty manufacturer for such a player (filled from the stored device
+   info or the stored provider name) before these players are published; an HA-side guard is a
+   follow-up, not part of #418.
 3. **A native protocol for a device that already has a player** attaches to it; the id does not
    change. The universal takeover path goes.
 4. **Naming**: the core object is `Player` (what `mass.players.get_player()` returns); providers
