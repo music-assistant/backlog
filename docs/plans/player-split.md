@@ -46,8 +46,11 @@ endpoints). A core player has at most one native endpoint and at most one endpoi
 none is required.
 
 An endpoint attaches to exactly one core player. One persisted edge records it: the endpoint's
-`protocol_parent_id` (already the canonical side today), so endpoint configs stay where they are
-(`players/{endpoint_id}`) and no data moves.
+`protocol_parent_id` (already the canonical side today; the key name stays to avoid a data move),
+stored on every endpoint whose id differs from its player's id. Endpoint configs stay where they
+are (`players/{endpoint_id}`). At startup each player builds its endpoint registry from the
+endpoints that point to it, so an endpoint belongs to one player by construction. The parent-side
+`linked_protocol_ids` list is no longer read or written.
 
 **Player id.** Owned by the core player, stable for its whole life, never derived again and never
 switched by an endpoint. A one-time migration freezes the current visible id of every existing
