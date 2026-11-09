@@ -111,10 +111,10 @@ Defaults for the smaller questions:
 0. **Preparation, no behaviour change** (#413, #414; several small PRs):
    - provider-scoped endpoint lookup, and all providers moved to it (still returns today's object);
    - plugins move to availability transitions;
-   - `Player.__init__` stops writing config (registration creates it);
-   - core persists last known device info/identifiers.
+   - `Player.__init__` stops writing config (registration creates it).
 1. **Core player + attach/detach for native endpoints** (#415). The registry holds core players, provider
    objects become `PlayerEndpoint`s; boot from config per decision 2; the one-time id migration;
+   core keeps the last known device info and identifiers (nothing reads them before this phase);
    detach instead of unregister; queue lifetime follows the core player. Fixes Squeezelite on a
    plug and every native player after a restart.
 2. **Protocol endpoints on core players, universal player provider removed** (#416). Universal configs
