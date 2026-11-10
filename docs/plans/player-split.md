@@ -197,7 +197,9 @@ separate PR.
 instances of one domain, attached hidden (a Raumfeld room of three DLNA renderers, music-assistant/support#6851).
 A zone or sub-device identifier type is needed because chassis MAC plus IP are not enough on their
 own (NAD CI580 with four BluOS zones, music-assistant/support#6847; MusicCast zone 2). A differing strong
-identifier (UUID, CAST_UUID, AIRPLAY_ID, serial) vetoes a match before any MAC or IP fallback;
+identifier vetoes a match before any MAC or IP fallback: CAST_UUID, AIRPLAY_ID and the zone
+between any two protocols, UUID and serial only between protocols of one domain (the Cast and
+DLNA sides of one device each report a UUID of their own);
 today only AIRPLAY_ID does (several shairport-sync receivers on one host, music-assistant/support#6807, music-assistant/support#5985). Two
 native protocols for one device need a priority: vendor native over hass_players over generic
 (music-assistant/support#6836, music-assistant/support#6468).
@@ -533,6 +535,8 @@ Reviewed at head `9b7b44fda`; the notes in brackets were checked against that he
   of one domain on one parent, parents holding another device's identifiers and `cached_arp_mac`,
   a parent edge pointing at the wrong zone or at a native player that never registers again
   (music-assistant/support#6807, music-assistant/support#6847, music-assistant/support#6461, music-assistant/support#6737).
+  *(decided 2026-11-10)* A stored UUID that ends in `_MR` (the UDN of a Sonos renderer) loses the
+  suffix, as a newly reported one does, so the Sonos player still matches it by UUID.
 - Collect the `settings.json` files from those issues as migration test fixtures. Ship a
   diagnostics dump of the resulting topology (player → protocols with roles and availability).
 - Publish players before providers load, so HA receives one consistent list at boot.
