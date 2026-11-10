@@ -59,6 +59,10 @@ Every device is one player, with no exceptions: native devices, protocol-only de
 universal players), Cast groups and stereo pairs, sync groups and universal groups (virtual
 protocols). A player has at most one native protocol and at most one protocol per domain; none is
 required.
+*(decided 2026-11-09)* The design keeps the door open for a player composed of several protocol
+players (a stereo pair or surround set of several devices): `Player.protocols` is a collection with
+roles and the derivation runs over all of them; "at most one native" is an attach rule, not a
+schema assumption.
 
 A protocol attaches to exactly one player. One persisted edge records it: the protocol's
 `protocol_parent_id` (already the canonical side today; the key name stays to avoid a data move),
@@ -121,6 +125,10 @@ enable/disable when `api.getProvider(config.provider)` is absent, and `playerCan
 a loaded provider advertising `REMOVE_PLAYER` or `REMOVE_GROUP_PLAYER`. A frontend change in the
 same release gates both on the player state instead, or restored players with unloaded providers
 can neither be disabled nor deleted in settings.
+*(decided 2026-11-09)* Every player provider advertises `REMOVE_PLAYER`. The frontend companion PR
+gates settings, enable/disable and delete (groups included) on the stored player config, with the
+live player state optional (a disabled player has no live object), and is a landing dependency of
+the cutover.
 
 **Config shape.** *(review)* With frozen ids, `players/{id}` is both the player record and the
 native protocol's record, while a player minted after the change has a separate record: two shapes
@@ -135,14 +143,18 @@ players, with protocol configs left where they are. Decide explicitly, also if t
 shapes".
 *(decided 2026-11-09)* The split as proposed: `players/{player_id}` is the player record only,
 protocol instances move to `player_protocols/{protocol_id}` with `player_id` as the edge, replacing
-`protocol_parent_id`. One idempotent migration that never raises, with `settings.json` backed up
-first. The `config/players/*` API wire format stays unchanged for now: the `||protocol||` virtual
-keys are still merged on read and stripped on write, so the frontend is untouched.
+`protocol_parent_id`. One idempotent migration that tolerates malformed records, with
+`settings.json` backed up first (failure handling under Migration). The `config/players/*` API wire
+format stays unchanged for now: the `||protocol||` virtual keys are still merged on read and
+stripped on write, so the frontend is untouched.
 
 **State of a player with several protocols.** *(review)*
 - `available` = any attached protocol `available_for_playback`; `needs_setup` is aggregated the
   same way. Today only `ProtocolBackedPlayer` does this; a native parent goes unavailable when its
   native protocol drops although AirPlay and Cast still work (music-assistant/support#6951).
+  *(decided 2026-11-09)* Two predicates, as today: the published `available` also holds for a
+  device switched off at its external power control (see Lifecycle), `available_for_playback` does
+  not.
 - Control target per feature: the active output protocol, else native, else any available protocol
   (music-assistant/support#6468: volume went to the idle snapclient while Sendspin played; music-assistant/support#6907:
   `active_output_protocol` never set when a member joins through a native AirPlay group).
@@ -175,6 +187,11 @@ Otherwise both stay and the UI offers "merge into…". The absorbed id becomes a
 played), no group membership; "created this session" is not a signal. Otherwise both players stay
 and a new `players/merge` API command (Phase 2) merges them by hand; the UI action is a frontend
 follow-up. The absorbed id becomes a legacy id. The shared-domain veto of today's merge check stays.
+*(decided 2026-11-09)* The collect window stays only for the first sight of an audio-only unknown
+device and ends early once the identifiers needed for matching are in (max 15 s); native protocols
+mint at once, known devices never wait. "Unused" in detail: no custom config (user-editable keys
+only, never automatic metadata), no saved queue items, no group membership. Auto-merge is a
+separate PR.
 
 **Where one protocol per domain is not enough.** *(review)* A native protocol can claim further
 instances of one domain, attached hidden (a Raumfeld room of three DLNA renderers, music-assistant/support#6851).
@@ -217,6 +234,8 @@ never a second player or a new id.
 - *(review)* Session-only protocols (decision 2) get no persisted config unless the user customised
   them, are purged on detach otherwise, are not offered in plugin pickers, and a second attach of
   the same protocol id replaces the first (music-assistant/support#6773, music-assistant/support#6822, music-assistant/support#6064).
+  *(decided 2026-11-09)* A session-only player that detaches emits `PLAYER_REMOVED`; its record
+  stays if customised.
 - *(review)* Every player persists `last_seen`; `PlayerState` exposes `unavailable_since`; the
   settings page gets "remove all unavailable players". Auto-forget stays out of scope.
 
@@ -244,6 +263,9 @@ grouping (about 1,500 lines).
    migration (Sendspin browser/app players and the other session-only types) runs before this boot
    step. A record of a provider that is not installed shows a "provider not installed" reason in
    the UI.
+   *(decided 2026-11-09)* The session-only marker migration deletes uncustomised Sendspin
+   standalone records and marks customised ones; customised = user-editable keys, never automatic
+   metadata.
    *(review)* Prerequisite, in Phase 1: the Home Assistant entity reads
    `device_info.manufacturer or provider.name` (`entity.py`), so a restored player with an unloaded
    provider and an empty manufacturer would raise instead of becoming an unavailable entity. The
@@ -259,6 +281,8 @@ grouping (about 1,500 lines).
    `PlayerProtocol` and `get_endpoint` / `endpoints` (provider and controller) to `get_protocol` /
    `protocols` before Phase 1; the MSX Bridge upstream repo follows.
    *(done: music-assistant/server#7463)*
+   *(decided 2026-11-09)* The class name stays `PlayerProtocol`; its id attribute becomes
+   `protocol_id` at the cutover.
 5. **Ids**: existing ids are frozen as player ids; new players get MA-minted ids (see above).
    *(review: proposed change)* Every player also carries a legacy id (see Legacy id).
    *(decided 2026-11-09)* As `legacy_ids: list[str]`, accepted indefinitely (see Legacy id).
@@ -305,6 +329,11 @@ Defaults for the smaller questions:
 
 ## Phases (PRs into `feature/player-split`)
 
+*(decided 2026-11-09)* Phases 1-3 are implemented as ONE continuous PR sequence to the end state,
+without scaffolding: no intermediate class names, no shims, no bridge for the universal provider.
+The cutover is one PR, reviewable per commit. The sequence:
+[player-split-pr-sequence.md](player-split-pr-sequence.md).
+
 0. **Preparation, no behaviour change** (#413, #414; several small PRs):
    - provider-scoped protocol lookup, and all providers moved to it (still returns today's object);
    - plugins move to availability transitions;
@@ -346,12 +375,16 @@ Defaults for the smaller questions:
      Phase 1 PR, with a read-through shim for the universal provider and the linking layer that
      still read `players/{protocol_id}` until Phase 2 removes them (or the split moves to the first
      Phase 2 PR if the shim is not worth it).
+     *(decided 2026-11-09)* No read-through shim: the tree split lands in the cutover PR together
+     with the removal of the universal provider and the linking layer.
    - Events: write the semantics down (`PLAYER_ADDED` on first sight, `PLAYER_REMOVED` on user
      removal, `PLAYER_UPDATED` for attach and detach) and plan the removal of the compatibility
      `PLAYER_CONFIG_UPDATED` emitted on feature changes for the HA integration, together with the
      HA release that re-evaluates features on `PLAYER_UPDATED` (see Phase 4).
+     *(decided 2026-11-09)* Disable emits `PLAYER_REMOVED` instead of today's update: the object
+     goes, the record stays, HA drops the device.
 2. **Audio protocols on players, universal player provider removed** (#416). Universal configs
-   become players with the same `up…` ids (idempotent migration that never raises: identify them by
+   become players with the same `up…` ids (idempotent migration: identify them by
    `provider == "universal_player"`, never by type); takeover becomes attach.
 
    *(review)* Also: protocol re-identification; the collect window and merge policy; the
@@ -428,6 +461,10 @@ Defaults for the smaller questions:
      2025-03-15, and `group_volume = 0`) and reads 4 back on deserialisation. Pick a minimum client
      version per consumer (HA integration, python client, mobile app, frontend), announce it, and
      drop them.
+     *(decided 2026-11-09)* `group_childs`, `extra_data`, `hide_player_in_ui`,
+     `device_info.mac_address` and `device_info.ip_address` are dropped in models#463. The others
+     stay until the mobile app reads `name` / `playback_state` and HA treats `powered=None` as on
+     (HA >= 2026.5.0 for `group_volume`).
    - Complexity suppressions: the 10 `noqa PLR09xx/C901` sites in the players, queues and sync
      group code (12 with `config/players.py` and `migrations.py`; set_members handling, output
      protocol config entries and the migration runner among them) are the hotspots. The splits
@@ -489,6 +526,9 @@ Reviewed at head `9b7b44fda`; the notes in brackets were checked against that he
 ## Migration *(review)*
 
 - Back up `settings.json` before the first run of the split migration.
+  *(decided 2026-11-10)* A record the migration cannot convert is logged and skipped. When the
+  backup cannot be written or a whole step fails, startup stops with a clear error, nothing is
+  saved, and the next boot retries.
 - Validate and repair edges, not only move keys: orphan protocols without a parent, two instances
   of one domain on one parent, parents holding another device's identifiers and `cached_arp_mac`,
   a parent edge pointing at the wrong zone or at a native player that never registers again
@@ -507,6 +547,8 @@ Reviewed at head `9b7b44fda`; the notes in brackets were checked against that he
   attach and detach as `PLAYER_UPDATED`. The HA integration already handles that. The protocol
   players' own HA entities (`…_2`) disappear; some users control those directly (music-assistant/support#6293),
   so this needs a release note.
+  *(decided 2026-11-09)* `PLAYER_REMOVED` also on disable and on the detach of a session-only
+  player (see Lifecycle and Phase 1 events).
 - The frontend already hides unavailable players from the main list; settings and HA show them.
 
 ## Scenario suite *(review)*
