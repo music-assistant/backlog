@@ -373,7 +373,10 @@ when its inputs come from protocol objects (§6h). Protocols are looked up in `_
 through the legacy-id resolver: `get_protocol` goes through `get_player` today, and a frozen id is
 shared by a player record and its protocol record, so after a merge the resolver would hand out the
 keeper for a protocol id. The resolver's guard (an id with a stored config is never a legacy id)
-covers both trees. Test: a protocol whose id is another player's legacy id. The vetoes apply to the
+checks player records only, since an absorbed frozen id keeps its protocol record and must still
+resolve to the keeper. Tests: a protocol whose id is another player's legacy id; after a frozen-id
+merge, the absorbed id resolves to the keeper as a player and queue id while its protocol is still
+found by that id. The vetoes apply to the
 merged identity of a player (§6f): the sibling match and the seed-only collection in the linking
 code compare pairwise and can ignore a veto, and both are replaced; identifiers are kept per
 protocol record, so "the same domain" is exact where PR 2's matcher approximates it as "the two sides
