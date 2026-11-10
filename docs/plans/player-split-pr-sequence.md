@@ -79,8 +79,9 @@ media (`models/player.py:3159-3160`, `3287`); standing plugin sources and device
 (`3389-3419`); transient flags; the previous state and position anchors (`2795-2809`,
 `2859-2861`); the clock. Effects returned, never performed inside: the media-updated callback
 (`2232-2234`), the default-name persist (`2236-2237`), the position-jumped signal (`2245`), the
-stop-called flag and the 5 s MA-source timer (`2863-2881`). Rules in PR 4, not PR 1: `available` =
-any protocol `available_for_playback`; `needs_setup` aggregated the same way; name = custom, else
+stop-called flag and the 5 s MA-source timer (`2863-2881`). Rules in PR 4, not PR 1: `available` and
+`available_for_playback` as the two predicates of §6d (only the published `available` holds under an
+external power control); `needs_setup` aggregated over the protocols; name = custom, else
 native, else audio by priority, else stored `default_name`; power tri-state; control target per
 feature = active output protocol, else native, else any available protocol; a control protocol
 reporting itself a native follower clears the active output (today in
@@ -90,7 +91,8 @@ reporting itself a native follower clears the active output (today in
 12 hex (`up` and snapcast's `ma_` are taken). Attach resolves identity as: stored edge of the
 protocol's record, validated against the live veto rules of the player's attached protocols; else
 identifier match against live players and the stored identifiers of disabled player records (natives
-only against players without a native protocol, §6f; a match to a disabled player writes the edge and
+only against players without a native protocol record or with an offline one of the same provider
+and domain, §6f; a match to a disabled player writes the edge and
 creates no object, §2); else mint. Known devices never wait. Collect window: only an audio protocol that matches nothing and
 has no valid hardware MAC yet (ARP pending, address missing) waits, at most today's 15 s
 (`protocol_linking.py:439`), re-matching as identifiers arrive and minting as soon as a hardware MAC is
@@ -274,7 +276,8 @@ tree split migration and the accessor switch (§6i), boot step and `get_player_c
 session-only player without a record (first save promotes it: player record plus protocol records,
 `session_only: true`), in-memory config for a protocol without a record (§6e), enable / disable /
 remove as controller concerns (`on_player_config_change` 2586-2671: disable = detach, stop,
-`PLAYER_REMOVED`, no object; enable = create from record, `discover_players()` of every protocol
+`PLAYER_REMOVED`, no object; enable = create from record (a session-only one is created by its next
+attach), `discover_players()` of every protocol
 record's provider; the cascade at 2617-2640 and the defaults `models/player_provider.py:66-77`
 deleted; Sendspin, MSX and MusicCast re-offer connected clients from `discover_players` instead of
 their `on_player_enabled` overrides at `sendspin/provider.py:563-574`, `msx_bridge/provider.py:190-205`,
@@ -466,7 +469,8 @@ MAC cache is skipped, and only a user save promotes it, so neither `set_raw_play
 `KeyError` (`config/players.py:662-665`) nor a nested `config.set` creates a partial record.
 
 **(f) Natives and vetoes.** Recommendation: a native attaches only to a player without a native
-protocol record; a player holding a native of another domain stays separate until PR 8's priority
+protocol record, or takes over the player's offline native record of the same provider and domain
+(re-identification, §1); a player holding a native of another domain stays separate until PR 8's priority
 rule (a Pi with Squeezelite and a Snapcast client, a hass_players entity of a native device). Vetoes:
 UUID and SERIAL same-domain only, AIRPLAY_ID, CAST_UUID and ZONE cross-domain, all over sets.
 
@@ -505,11 +509,13 @@ the list: saved queues of both cache categories (`purge_saved_queue`, `player_qu
 and user filters (`remove_from_user_filters`, `auth.py:1607`; `_prune_stale_user_filters` at 2485 is
 a no-op without players and maps no ids), then clears it; a crash in between re-runs it. Tree step:
 restore a missing child edge from the parent's `linked_protocol_ids` when the child record exists and
-no other parent lists it (all 7 empty `up…` wrappers locally are this half-write); then `up…`
+no other parent lists it, a wrapper's list outranking a native's (music-assistant/server#7156; all 7
+empty `up…` wrappers locally are this half-write); then `up…`
 records (`provider == "universal_player"`, never by type) get `provider` = highest-priority child
 record, wrappers still without a child are deleted with DSP and queue records and added to the
-cleanup list; protocol-typed records with an edge → `player_protocols/{id}` with `player_id` = edge,
-`role` = audio; every other player record's provider-owned keys, audio keys and `setup_data` → a same-id
+cleanup list; protocol-typed records → `player_protocols/{id}` with `player_id` = edge, `role` =
+audio, one without an edge unbound (attach re-matches) with `enabled: true`, since its flag was the
+device's own enable; every other player record's provider-owned keys, audio keys and `setup_data` → a same-id
 `player_protocols/{id}` with `role` = native (virtual for the sync_group, universal_group and
 auracast domains); a former `up…` wrapper (stored provider `universal_player` when the step starts)
 gets none, since it has no protocol of its own and a native must still be able to attach to it

@@ -152,6 +152,9 @@ stripped on write, so the frontend is untouched.
 - `available` = any attached protocol `available_for_playback`; `needs_setup` is aggregated the
   same way. Today only `ProtocolBackedPlayer` does this; a native parent goes unavailable when its
   native protocol drops although AirPlay and Cast still work (music-assistant/support#6951).
+  *(decided 2026-11-09)* Two predicates, as today: the published `available` also holds for a
+  device switched off at its external power control (see Lifecycle), `available_for_playback` does
+  not.
 - Control target per feature: the active output protocol, else native, else any available protocol
   (music-assistant/support#6468: volume went to the idle snapclient while Sendspin played; music-assistant/support#6907:
   `active_output_protocol` never set when a member joins through a native AirPlay group).
