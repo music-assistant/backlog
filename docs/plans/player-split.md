@@ -82,9 +82,10 @@ MA-minted opaque id. Moving existing players to MA-minted ids, with a clean HA m
 later step.
 
 **Legacy id.** *(review)* Every player gets a `legacy_id`: the id it had before the split (for a
-frozen id the id itself; after #418 the pre-move id), plus any id absorbed by a merge. The API
-resolves a legacy id wherever a player or queue id is taken. `PlayerState` exposes it. The HA
-migration of #418 maps `unique_id` and the `(DOMAIN, player_id)` device identifier on it.
+frozen id the id itself; after #418 the pre-move id), plus any id absorbed by a merge, together with
+the absorbed player's own legacy ids. The API resolves a legacy id wherever a player or queue id is
+taken. `PlayerState` exposes it. The HA migration of #418 maps `unique_id` and the `(DOMAIN,
+player_id)` device identifier on it.
 *(decided 2026-11-09)* The field is `legacy_ids: list[str]`, empty by default, on the models
 `Player` (one additive models release, safe for old clients and the pinned HA models version),
 exposed on `PlayerState` and persisted on the player record. One resolver (a reverse index of
@@ -198,8 +199,9 @@ instances of one domain, attached hidden (a Raumfeld room of three DLNA renderer
 A zone or sub-device identifier type is needed because chassis MAC plus IP are not enough on their
 own (NAD CI580 with four BluOS zones, music-assistant/support#6847; MusicCast zone 2). A differing strong
 identifier vetoes a match before any MAC or IP fallback: CAST_UUID, AIRPLAY_ID and the zone
-between any two protocols, UUID and serial only between protocols of one domain (the Cast and
-DLNA sides of one device each report a UUID of their own);
+between any two protocols, UUID and serial only when both values were reported by a protocol of
+the same domain (the Cast and DLNA sides of one device each report a UUID of their own); a veto
+applies to the merged identity of a player;
 today only AIRPLAY_ID does (several shairport-sync receivers on one host, music-assistant/support#6807, music-assistant/support#5985). Two
 native protocols for one device need a priority: vendor native over hass_players over generic
 (music-assistant/support#6836, music-assistant/support#6468).
@@ -233,6 +235,15 @@ never a second player or a new id.
   and play on a player with an external power control (music-assistant/server#7435). Today it
   returns success and does nothing (music-assistant/support#6493). A plugin holding a source for an offline device
   starts it on the became-available transition (music-assistant/support#7017).
+- *(decided 2026-11-10)* Access to a grouped player. With access to a player a user may take it out
+  of its group and use it alone: ungroup, power off, Play Media when the player's "play media
+  overrides group" setting is on, select source. Anything that plays on, or steers, the group needs
+  access to the group player or the leader. Adding to a group needs access to the target as named
+  and to every player added; removing needs access to the target (including the group player a
+  command is passed on to) or to every player removed. `player_queues/play_media` takes the queue id
+  of the player the user picked, and the server decides where the request belongs: add, next and
+  replace-next go to the queue the player is playing for; play and replace go to the player alone or
+  to the owner's queue, by that setting.
 - *(review)* Session-only protocols (decision 2) get no persisted config unless the user customised
   them, are purged on detach otherwise, are not offered in plugin pickers, and a second attach of
   the same protocol id replaces the first (music-assistant/support#6773, music-assistant/support#6822, music-assistant/support#6064).

@@ -6,9 +6,10 @@ where they disagree.
 
 Facts checked on `feature/player-split` at dc5d1646e; scenario suite at origin/player-split/scenarios
 56fc3cdb5 (second fix round landed: the AirPlay veto case passes, the "played" duplicate holds a
-saved queue; 26 strict xfail cases: 15 "phase 1", 11 "phase 2"). Paths relative to `music_assistant/`
-unless they start with `tests/`. Binding rules applied: no step a later PR throws away; phases 1-3 as one
-sequence on `feature/player-split`; every PR leaves both suites green with the remaining markers strict;
+saved queue; 26 strict xfail cases: 15 "phase 1", 11 "phase 2"). PR 1 and PR 3 landed at 0852b2534;
+their sections describe what landed. Paths relative to `music_assistant/` unless they start with
+`tests/`. Binding rules applied: no step a later PR throws away; phases 1-3 as one sequence on
+`feature/player-split`; every PR leaves both suites green with the remaining markers strict;
 file moves and renames only in the tail; the cutover is one PR reviewable per commit; auto-merge is
 separate; disable emits `PLAYER_REMOVED`; class name `PlayerProtocol`, id attribute `protocol_id` from
 the cutover on; a `Player` may later hold several protocol players, so nothing below assumes one.
@@ -102,7 +103,8 @@ protocol record of the same provider and domain, the newcomer takes over that re
 setup_data) under its own id, `preferred_output_protocol` is rewritten, the stale record goes. Merge
 (PR 5): automatic only when the younger player is unused (§5, PR 5); otherwise both stay and
 `players/merge` merges by hand. Absorbed id → keeper's `legacy_ids`, edges re-pointed, groups and
-user filters rewritten, absorbed saved queue purged, `PLAYER_REMOVED(absorbed)`.
+user filters rewritten, absorbed saved queue purged, `PLAYER_REMOVED(absorbed)`. The absorbed
+player's own legacy ids go to the keeper with it.
 
 ## 2. Attach and detach
 
@@ -169,10 +171,12 @@ and `ProtocolRole` (with an unknown fallback), `IdentifierType.ZONE` (absent in 
 `AIRPLAY_ID`). `forbid_extra_keys` is not set in 1.1.236's `player.py`. HA `dev` pins
 `music-assistant-client==1.8.0` (`manifest.json:15`), which pins models 1.1.236 (client
 `pyproject.toml:10`): the same version as the server (`pyproject.toml:29`,
-`requirements_all.txt:57`), so additive fields are safe for HA. Server: pin bump in PR 2;
-`API_SCHEMA_VERSION` 106 → 107 (`constants.py`) in PR 3, with the first field the server sends to
-clients (a pin bump on its own is no reason for it). Legacy id resolution (PR 3): one
-`run_api_command(handler, args)` in `helpers/api.py` (home of `APICommandHandler`, line 69) used by
+`requirements_all.txt:57`), so additive fields are safe for HA. Server: pin bump in PR 2; the
+exposure of `legacy_ids` on the player state and the `API_SCHEMA_VERSION` bump (`constants.py`) follow
+the pin as a small PR of their own, with the first field the server sends to clients (a pin bump on
+its own is no reason for it); the schema number is the next free one at that time, since dev raises
+it independently. Legacy id resolution (PR 3): one `run_api_command(handler, args)` in `helpers/api.py`
+(home of `APICommandHandler`, line 69) used by
 all four dispatchers, `websocket_client.py:360-361`, `webserver/controller.py:889-890`,
 `fastmcp_server/execution.py:888`, `snapcast/socket_server.py:190`; it rewrites `player_id`,
 `queue_id`, `target_player`, `player_ids`, `child_player_ids` (`controller.py:1520`),
@@ -181,7 +185,9 @@ all four dispatchers, `websocket_client.py:360-361`, `webserver/controller.py:88
 1306-1307), and the player-filter arrays of `auth/user/create` and `auth/user/update`
 (`auth.py:1358, 1693`); never protocol ids (setup flows name the protocol child,
 `config/flows.py:640-677`). `get_player` (`controller.py:483`) and `player_queues.get` /
-`queue_data` (`382, 387`) resolve for internal callers. New commands: `players/merge` (PR 5),
+`queue_data` (`382, 387`) resolve for internal callers; `has_player_access` checks the id of the
+looked-up player when the caller passes one, and the community MCP server's `player://` and
+`queue://` resources resolve their target. New commands: `players/merge` (PR 5),
 `players/remove_unavailable` (PR 4). `config/players/*` unchanged on the wire.
 
 ## 5. PR sequence
@@ -193,10 +199,15 @@ is not touched by this sequence: it runs before the split step in the same `migr
 settles on is the one that gets frozen.
 
 ### PR 1. Pure state derivation
-Scope: new derivation module; `update_state` (`models/player.py:2184`), `__collect_input_snapshot`
-(`2669`, a dict of the object's own values today, read through the properties, not `_attr_*`),
-`__calculate_player_state` (`2778`) and the `__final_*` methods become `derive_player_state` with the
-input and effect boundary of §1; `mark_external_source_ended` (`2257`) writes a player-side override.
+Landed as server#7508. Scope: new derivation module (`models/player_state.py`); `update_state`
+(`models/player.py:2184`), `__collect_input_snapshot` (`2669`), `__calculate_player_state` (`2778`)
+and the `__final_*` methods become `derive_player_state` with the input and effect boundary of §1.
+The input snapshot reads `device_info`, `extra_attributes` and `extra_data` through the properties,
+and the reported `sound_mode_list` and `options` lists themselves: no player overrides those two
+properties, and each property read builds a new list on the hot path. `mark_external_source_ended`
+(`2257`) keeps clearing the reported values itself until PR 4: providers read the raw values (Sonos
+`source_list` and `play()`, Raumfeld's external-source tracking, the AirPlay control player, the
+linking and announcement code), so a masking override in the derivation is not behaviour-neutral.
 Today's rules only, plus the one-update lag of `group_volume` / `group_volume_muted`. No early XPASS:
 `test_player_stays_available_on_its_audio_protocols` keeps failing because `available` still reads the
 native's own value. Budget: a rewrite of the inputs, not a move (about 40 `get_player` calls between
@@ -223,10 +234,10 @@ PR 4. Tests: `tests/controllers/players/test_matching.py`, one per rule and per 
 universal flow keeps them apart like the passing AirPlay case). No moves.
 
 ### PR 3. Legacy ids and the API id resolver
-Scope: §4 on the wire: `PlayerState.legacy_ids` from `values.legacy_ids`, the other new fields at
-their defaults until PR 4 fills them, the schema bump (once PR 2's pin is in; until then the PR
-leaves the exposure out), the reverse index and `resolve_player_id`, `run_api_command` in
-the four dispatchers with the full argument list, internal lookups. Tests: dispatcher tests through
+Landed as server#7504. Scope: §4: the reverse index and `resolve_player_id`, `run_api_command` in
+the four dispatchers with the full argument list, internal lookups. The exposure of `legacy_ids` on
+`PlayerState` (from `values.legacy_ids`, the other new fields at their defaults until PR 4 fills them)
+and the schema bump follow PR 2's pin as a small PR of their own (§4). Tests: dispatcher tests through
 both transports incl. permission handling of `player_queues/transfer`, state serialisation. Stored
 data: `legacy_ids` written only by merges (PR 5). Can run in parallel with PR 1 and PR 2. Markers:
 none. No moves.
@@ -355,6 +366,20 @@ output switching while muted and at the volume limits; restart with every provid
 one, remove one from the frontend with HA connected; boot time and HA entity count on a large
 settings.json. No moves (the provider half moves into an existing file; new modules only).
 
+Carried over from the reviews of PR 1 to PR 3. `mark_external_source_ended` converts together with
+the providers that read the raw values it clears (PR 1); proposed: a hook on the protocol that the
+core calls, whose default clears the three reported values. The input collector keeps PR 1's shape
+when its inputs come from protocol objects (§6h). Protocols are looked up in `_protocols`, never
+through the legacy-id resolver: `get_protocol` goes through `get_player` today, and a frozen id is
+shared by a player record and its protocol record, so after a merge the resolver would hand out the
+keeper for a protocol id. The resolver's guard (an id with a stored config is never a legacy id)
+covers both trees. Test: a protocol whose id is another player's legacy id. The vetoes apply to the
+merged identity of a player (§6f): the sibling match and the seed-only collection in the linking
+code compare pairwise and can ignore a veto, and both are replaced; identifiers are kept per
+protocol record, so "the same domain" is exact where PR 2's matcher approximates it as "the two sides
+share any domain" (a wrapper stores one value per identifier type). The grouping and redirect code
+carries over the access rules for grouped players (plan, Lifecycle).
+
 ### PR 5. Auto-merge
 Scope: `merge_players(keep, absorb)` and `players/merge`; the automatic merge at attach when the
 younger player is unused: no custom config (no `name`, no user-editable key on its player record or
@@ -365,9 +390,17 @@ at least one item: items are written only when `items_cache_dirty` is set by an 
 first flush, `2086`, `state.py:120`; a row that expired after 30 days without a write,
 `cache/constants.py:12`, counts as unused, accepted), no group membership (not in any group
 protocol's member lists, not synced, not in an active group); age = `created_at`, a record without one
-is older, a frozen id wins a tie; the shared-domain veto stays. Stored data: `legacy_ids` appended;
-no migration. Markers removed: 3 cases (§7). Tests: merge policy per signal; the scenario rewrite of
-§7 for the used pair. Frontend: "merge into…" follow-up. Hardware: TV seen as AirPlay first with a late
+is older, a frozen id wins a tie; the shared-domain veto stays. Legacy ids have one writer, the
+merge: the keeper gets the absorbed player's id and the absorbed player's own legacy ids,
+de-duplicated and persisted, and the merge rebuilds the reverse index itself before the absorbed
+config is deleted (otherwise it is rebuilt at setup and when a player config is deleted). A queue
+command called inside the server with a legacy id (a provider setting that still names an absorbed
+player, such as the Party plugin's player or a Yandex Station target) indexes the queue store with
+the id it was given, so the public queue commands work on the queue's own id from their first line
+on, as the read accessors already do. Stored data: `legacy_ids` appended; no migration. Markers
+removed: 3 cases (§7). Tests: merge policy per signal; a chain (A merged into B, then B into C) keeps
+A resolving; the two legacy-id queue commands above; the scenario rewrite of §7 for the used pair.
+Frontend: "merge into…" follow-up. Hardware: TV seen as AirPlay first with a late
 address, then Cast. No moves.
 
 ### PR 8. Zones, claimed instances, native priority
@@ -475,16 +508,23 @@ protocol record, or takes over the player's offline native record of the same pr
 (re-identification, §1); a player holding a native of another domain stays separate until PR 8's priority
 rule (a Pi with Squeezelite and a Snapcast client, a hass_players entity of a native device). Vetoes:
 UUID and SERIAL same-domain only, AIRPLAY_ID, CAST_UUID and ZONE cross-domain, all over sets.
+A veto applies to the merged identity of a player, not to one pair of protocols. "The same domain"
+means both values were reported by a protocol of that domain.
 
-**(g) Models and the resolver.** Recommendation: the pin in PR 2 (it needs ZONE), the fields and
-the schema bump in PR 3. HA `dev` already runs models 1.1.236 through client 1.8.0, so the v1 note about a
-1.1.189 pin is stale. PR 3's inventory is §4, incl. `player_queues/transfer`, the user-filter arrays,
+**(g) Models and the resolver.** Recommendation: the pin in PR 2 (it needs ZONE), the resolver in
+PR 3, the fields and the schema bump in a small PR after the pin. HA `dev` already runs models
+1.1.236 through client 1.8.0, so the v1 note about a 1.1.189 pin is stale. PR 3's inventory is §4,
+incl. `player_queues/transfer`, the user-filter arrays,
 the fastmcp and snapcast dispatchers; protocol ids are never rewritten.
 
 **(h) PR 1's boundary.** Recommendation: §1's input list and effect list, today's rules only. The
 derivation takes the previous state, the anchors and the clock as inputs and returns effects; timers,
 persistence and callbacks stay in `update_state`. `test_player_stays_available_on_its_audio_protocols`
-stays a strict xfail through PR 1 because `available` still reads the native's own value.
+stays a strict xfail through PR 1 because `available` still reads the native's own value. The
+collector resolves artwork only for the queue the media is taken from (`resolve_media_queue`) and
+collects a value only for the role that reads it (`GroupSnapshot` for groups,
+`available_for_playback` only for members); PR 4 keeps that shape when the inputs come from protocol
+objects.
 
 **(i) Migrations.** Recommendation: one run-once flag per step (`player_split_session_only`,
 `player_split_tree`), written into the data by the step and saved with the rest of `migrate()`'s
