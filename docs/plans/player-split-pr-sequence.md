@@ -129,8 +129,10 @@ controller-internal `protocol_linking.py:1396` and `controller.py:1883`, the har
 1. `ConfigController._load` → `migrate()` (`config/controller.py:318-329`; only file-not-found and
    JSON errors are caught, a raising step aborts startup). The player-split steps run last, after
    every older step, each behind its own run-once top-level flag (the pattern of
-   `retired_local_audio_cleaned`, `constants.py:132-133`), shape-tolerant and never raising; the
-   runner wraps each step so a failing step is logged and skipped. Backup first (§6i).
+   `retired_local_audio_cleaned`, `constants.py:132-133`) and shape-tolerant: a record that cannot
+   be converted is logged and skipped, and the step carries on with the rest. A step that fails as
+   a whole is not caught: nothing is saved, its flag stays unset, startup stops with a clear error
+   and the next boot retries, as for a failed backup. Backup first (§6i).
 2. Core controllers (`mass.py:322-333`), then `post_setup` in order cache, tasks, streams, music,
    metadata, players, queues (`335-344`). `players.post_setup` boot step: a `Player` for every
    player record that is enabled and not session-only; `set_initialized`, `PLAYER_ADDED`,
@@ -561,3 +563,5 @@ assume today's internals are rewritten in PR 4 (§5).
 4. **Scenario rewrite for the used-duplicate pair.** Rewritten on the scenario branch before PR 4
    (§6j), so it cannot pass by the mere absence of merging.
 5. **PR 3b.** Lands as its own PR before the cutover.
+6. **A split step that fails.** A record that cannot be converted is logged and skipped. A step
+   that fails as a whole stops startup like a failed backup; the next boot retries.

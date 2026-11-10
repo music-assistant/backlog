@@ -143,9 +143,10 @@ players, with protocol configs left where they are. Decide explicitly, also if t
 shapes".
 *(decided 2026-11-09)* The split as proposed: `players/{player_id}` is the player record only,
 protocol instances move to `player_protocols/{protocol_id}` with `player_id` as the edge, replacing
-`protocol_parent_id`. One idempotent migration that never raises, with `settings.json` backed up
-first. The `config/players/*` API wire format stays unchanged for now: the `||protocol||` virtual
-keys are still merged on read and stripped on write, so the frontend is untouched.
+`protocol_parent_id`. One idempotent migration that tolerates malformed records, with
+`settings.json` backed up first (failure handling under Migration). The `config/players/*` API wire
+format stays unchanged for now: the `||protocol||` virtual keys are still merged on read and
+stripped on write, so the frontend is untouched.
 
 **State of a player with several protocols.** *(review)*
 - `available` = any attached protocol `available_for_playback`; `needs_setup` is aggregated the
@@ -380,7 +381,7 @@ The cutover is one PR, reviewable per commit. The sequence:
      *(decided 2026-11-09)* Disable emits `PLAYER_REMOVED` instead of today's update: the object
      goes, the record stays, HA drops the device.
 2. **Audio protocols on players, universal player provider removed** (#416). Universal configs
-   become players with the same `up…` ids (idempotent migration that never raises: identify them by
+   become players with the same `up…` ids (idempotent migration: identify them by
    `provider == "universal_player"`, never by type); takeover becomes attach.
 
    *(review)* Also: protocol re-identification; the collect window and merge policy; the
@@ -522,6 +523,9 @@ Reviewed at head `9b7b44fda`; the notes in brackets were checked against that he
 ## Migration *(review)*
 
 - Back up `settings.json` before the first run of the split migration.
+  *(decided 2026-11-10)* A record the migration cannot convert is logged and skipped. When the
+  backup cannot be written or a whole step fails, startup stops with a clear error, nothing is
+  saved, and the next boot retries.
 - Validate and repair edges, not only move keys: orphan protocols without a parent, two instances
   of one domain on one parent, parents holding another device's identifiers and `cached_arp_mac`,
   a parent edge pointing at the wrong zone or at a native player that never registers again
