@@ -169,8 +169,9 @@ and `ProtocolRole` (with an unknown fallback), `IdentifierType.ZONE` (absent in 
 `AIRPLAY_ID`). `forbid_extra_keys` is not set in 1.1.236's `player.py`. HA `dev` pins
 `music-assistant-client==1.8.0` (`manifest.json:15`), which pins models 1.1.236 (client
 `pyproject.toml:10`): the same version as the server (`pyproject.toml:29`,
-`requirements_all.txt:57`), so additive fields are safe for HA. Server: pin bump and
-`API_SCHEMA_VERSION` 105 → 106 (`constants.py:73`) in PR 2. Legacy id resolution (PR 3): one
+`requirements_all.txt:57`), so additive fields are safe for HA. Server: pin bump in PR 2;
+`API_SCHEMA_VERSION` 106 → 107 (`constants.py`) in PR 3, with the first field the server sends to
+clients (a pin bump on its own is no reason for it). Legacy id resolution (PR 3): one
 `run_api_command(handler, args)` in `helpers/api.py` (home of `APICommandHandler`, line 69) used by
 all four dispatchers, `websocket_client.py:360-361`, `webserver/controller.py:889-890`,
 `fastmcp_server/execution.py:888`, `snapcast/socket_server.py:190`; it rewrites `player_id`,
@@ -203,7 +204,7 @@ native's own value. Budget: a rewrite of the inputs, not a move (about 40 `get_p
 in 9 files move to the function. No data, models, client change; no moves. Markers: none.
 
 ### PR 2. Identifier matching as one table, models pin
-Scope: pin bump and schema bump; `controllers/players/matching.py`: identifiers as sets of (type,
+Scope: pin bump; `controllers/players/matching.py`: identifiers as sets of (type,
 value) (a Raumfeld room reports several UUIDs, `tests/scenarios/test_identity.py:239`); veto
 rules: a differing AIRPLAY_ID, CAST_UUID or ZONE vetoes across domains, a differing UUID or SERIAL
 only when both come from the same domain (Chromecast reports UUID = cast uuid
@@ -223,7 +224,8 @@ universal flow keeps them apart like the passing AirPlay case). No moves.
 
 ### PR 3. Legacy ids and the API id resolver
 Scope: §4 on the wire: `PlayerState.legacy_ids` from `values.legacy_ids`, the other new fields at
-their defaults until PR 4 fills them, the reverse index and `resolve_player_id`, `run_api_command` in
+their defaults until PR 4 fills them, the schema bump (once PR 2's pin is in; until then the PR
+leaves the exposure out), the reverse index and `resolve_player_id`, `run_api_command` in
 the four dispatchers with the full argument list, internal lookups. Tests: dispatcher tests through
 both transports incl. permission handling of `player_queues/transfer`, state serialisation. Stored
 data: `legacy_ids` written only by merges (PR 5). Can run in parallel with PR 1 and PR 2. Markers:
@@ -474,8 +476,8 @@ protocol record, or takes over the player's offline native record of the same pr
 rule (a Pi with Squeezelite and a Snapcast client, a hass_players entity of a native device). Vetoes:
 UUID and SERIAL same-domain only, AIRPLAY_ID, CAST_UUID and ZONE cross-domain, all over sets.
 
-**(g) Models and the resolver.** Recommendation: the pin and schema bump in PR 2 (it needs ZONE),
-the fields in PR 3. HA `dev` already runs models 1.1.236 through client 1.8.0, so the v1 note about a
+**(g) Models and the resolver.** Recommendation: the pin in PR 2 (it needs ZONE), the fields and
+the schema bump in PR 3. HA `dev` already runs models 1.1.236 through client 1.8.0, so the v1 note about a
 1.1.189 pin is stale. PR 3's inventory is §4, incl. `player_queues/transfer`, the user-filter arrays,
 the fastmcp and snapcast dispatchers; protocol ids are never rewritten.
 
@@ -520,6 +522,9 @@ device's own enable; every other player record's provider-owned keys, audio keys
 auracast domains); a former `up…` wrapper (stored provider `universal_player` when the step starts)
 gets none, since it has no protocol of its own and a native must still be able to attach to it
 (§6f); `linked_protocol_ids` and `protocol_parent_id` dropped. Repairs in the pass:
+a stored UUID identifier ending in `_MR` loses the suffix (the UDN of a Sonos renderer, which the
+DLNA provider reports without it since PR 2; a record without a MAC and with an old IP otherwise
+no longer matches its Sonos player);
 edge to a missing, self or child record → null (unbound, attach re-matches); two protocols of one
 domain on one player → keep the enabled one, else the one with `setup_data`, else the lowest id, null
 the rest (one local parent has three enabled AirPlay children without setup data); a record with an
