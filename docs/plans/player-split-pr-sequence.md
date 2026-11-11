@@ -6,8 +6,8 @@ where they disagree.
 
 Facts checked on `feature/player-split` at dc5d1646e; scenario suite at origin/player-split/scenarios
 56fc3cdb5 (second fix round landed: the AirPlay veto case passes, the "played" duplicate holds a
-saved queue; 26 strict xfail cases: 15 "phase 1", 11 "phase 2"). PR 1 and PR 3 landed at 0852b2534;
-their sections describe what landed. Paths relative to `music_assistant/` unless they start with
+saved queue; 26 strict xfail cases: 15 "phase 1", 11 "phase 2"). PR 1, PR 2, PR 3 and PR 3b have
+landed; their sections describe what landed. Paths relative to `music_assistant/` unless they start with
 `tests/`. Binding rules applied: no step a later PR throws away; phases 1-3 as one sequence on
 `feature/player-split`; every PR leaves both suites green with the remaining markers strict;
 file moves and renames only in the tail; the cutover is one PR reviewable per commit; auto-merge is
@@ -64,7 +64,11 @@ never the key. Access is scoped (PR 3b): `get_player_value(player_id, key)`,
 files, 73 calls) and `set_raw_player_config_value` (25 calls in 9 files); saves route each wire key to
 the record of the entry that declared it. The `config/players/*` wire format is unchanged:
 `||protocol||` and `||plugin||` keys stay merged on read and stripped on write
-(`config/players.py:233-255, 535-539`), native entries stay unprefixed.
+(`config/players.py:233-255, 535-539`); the entries of the player's primary protocol stay
+unprefixed and are saved to that protocol's record. The primary protocol is the native one, else
+the control one, else the virtual one (a LinkPlay device that plays through DLNA, a sync or
+universal group); an audio protocol is always prefixed. `config/players/get_value` stays addressed
+by player id; code that holds a protocol id reads that protocol's own config.
 
 **PlayerState** (models `Player`): today's fields plus `legacy_ids: list[str]`, `protocols:
 list[PlayerProtocolInfo]` (protocol_id, domain, provider instance, role, available, active),
@@ -115,7 +119,7 @@ player's own legacy ids go to the keeper with it.
 | | same id, other object (Squeezelite and Sendspin reconnect, Bluesound new IP) | replacement: `on_detach` on the old object without publishing, bind the new one. |
 | `detach(protocol_id)` | temporary loss, provider unload, disable | player stays; `on_detach`; queue quiescing only if this protocol was the playback path (§6d); `unavailable_since` set when no protocol is left available; `PLAYER_UPDATED`. A session-only player is removed (`PLAYER_REMOVED`); a customised record stays for the next attach. |
 | `remove_protocol(protocol_id)` | provider forgets a device (`chromecast/provider.py:316`, `sendspin/bridge_manager.py:178-184`, `chromecast/sendspin_bridge.py:906-910`, `sendspin/provider.py:780-784`) | detach + delete the protocol record; the player goes when no protocol record remains. |
-| `remove(player_id)` | user, or provider removal leaving no record | detach all, `on_remove` per protocol, delete player and protocol records, DSP, queue settings, saved queue, group memberships, user filters; `PLAYER_REMOVED`. Every player is removable. |
+| `remove(player_id)` | user, or provider removal leaving no record | detach all, `on_remove` per protocol (also for a protocol whose player is not live), delete player and protocol records, DSP, queue settings, saved queue, group memberships, user filters; `PLAYER_REMOVED`. Every player is removable. A user removal then asks each removed protocol's provider to discover again, so a device that is still on the network returns as a new player with default settings; not for a group player. |
 
 Attach rules: at most one native per player (a second native stays separate until PR 8); at most one
 protocol per domain (`_parent_has_active_protocol_from_domain`, `protocol_linking.py:1400`, kept);
@@ -215,7 +219,7 @@ native's own value. Budget: a rewrite of the inputs, not a move (about 40 `get_p
 in 9 files move to the function. No data, models, client change; no moves. Markers: none.
 
 ### PR 2. Identifier matching as one table, models pin
-Scope: pin bump; `controllers/players/matching.py`: identifiers as sets of (type,
+Landed as server#7505 (models 1.1.238). Scope: pin bump; `controllers/players/matching.py`: identifiers as sets of (type,
 value) (a Raumfeld room reports several UUIDs, `tests/scenarios/test_identity.py:239`); veto
 rules: a differing AIRPLAY_ID, CAST_UUID or ZONE vetoes across domains, a differing UUID or SERIAL
 only when both come from the same domain (Chromecast reports UUID = cast uuid
@@ -237,7 +241,7 @@ universal flow keeps them apart like the passing AirPlay case). No moves.
 Landed as server#7504. Scope: §4: the reverse index and `resolve_player_id`, `run_api_command` in
 the four dispatchers with the full argument list, internal lookups. The exposure of `legacy_ids` on
 `PlayerState` (from `values.legacy_ids`, the other new fields at their defaults until PR 4 fills them)
-and the schema bump follow PR 2's pin as a small PR of their own (§4). Tests: dispatcher tests through
+and the schema bump follow PR 2's pin as a small PR of their own (§4; landed as server#7521). Tests: dispatcher tests through
 both transports incl. permission handling of `player_queues/transfer`, state serialisation. Stored
 data: `legacy_ids` written only by merges (PR 5). Can run in parallel with PR 1 and PR 2. Markers:
 none. No moves.
@@ -269,6 +273,17 @@ reported by Sendspin (`is_web_player` `sendspin/player.py:2143`, `is_virtual_pla
 `provider.py:788`, DISPLAY / VISUALIZER / LIGHT / SOURCE at `provider.py:1337-1344`,
 `player.py:2903-2908, 3025-3036`, `sendspin_lights/base.py:81`, `hue_entertainment/bridge.py:126`),
 no behaviour yet. Markers: none. No moves.
+
+Landed as server#7519, with these differences from the scope above. `REMOVE_PLAYER` is not added to
+the 23 other manifests: features live in code, so the `@final` `PlayerProvider.supported_features`
+adds it for every player provider. Part (3) moved only the lookups that want the provider's own
+object (6 sites); the parent, leader and sync-member lookups need the player, stay on `get_player`
+and move to `protocol.player` in PR 4. Removal asks the provider to discover again afterwards
+(§2), and the providers that keep a registry of their own drop the removed device in `on_remove`
+(MusicCast, Roku, AmpliPi, the Sendspin bridges of AirPlay and Cast); Sendspin and Squeezelite got a
+`discover_players` that registers connected clients without a player. The accessors accept the base
+keys of a record next to its values. Every call site has the right scope for its key; what PR 4
+has to change is listed there.
 
 ### PR 4. The cutover: Player and PlayerProtocol, boot from config, config tree split, universal provider removed
 One PR, commits in this order, each reviewable on its own; the suites are green at the PR head
@@ -383,6 +398,51 @@ protocol record, so "the same domain" is exact where PR 2's matcher approximates
 share any domain" (a wrapper stores one value per identifier type). The grouping and redirect code
 carries over the access rules for grouped players (plan, Lifecycle).
 
+Carried over from the reviews of PR 3b. The fact behind most of it: a device or group first seen
+after the cutover gets a minted player id, so a native's protocol id equals its player's id only
+for records that existed before the migration, and every site that uses one id for both scopes
+needs a look.
+- Removal: `on_remove` also reaches a protocol whose player is not live (disabled, or an object
+  the provider holds that never attached); hass_players, fully_kiosk and mpd keep a configured
+  device list and MusicCast, Roku, AmpliPi and the Sendspin bridges a registry, so a missed hook
+  brings the device straight back or keeps it away. `remove()` keeps the discovery request of
+  PR 3b.
+- Removing one protocol must not take what a sibling owns: the AirPlay and Cast bridge managers
+  compute the same Sendspin client id for a speaker whose AirPlay id equals its Cast MAC, so the
+  permanent branch of `SendspinBridgeManagerBase.remove_bridge` acts only on a client whose stored
+  `underlying_player_id` is the removed protocol. Unloading a provider cancels its pending
+  discovery request.
+- `discover_players()` re-offers every device the provider knows that has no attached protocol:
+  enable (§8.3) and removal both rely on it. Sendspin and Squeezelite do since PR 3b; Chromecast
+  (pychromecast's browser is already running, a removed or re-enabled device returns only on its
+  next mDNS update), Snapcast (the removal deletes the client on the snapserver, it returns when
+  the client reconnects), Alexa (devices are registered once at load) and manually configured
+  Roku addresses do not yet.
+- "Does the server want this protocol now": eight providers skip a disabled device by reading the
+  protocol's `enabled` (sonos, sonos_s1, airplay, chromecast, snapcast, heos, samsung_wam,
+  sendspin). After the split that key is the output toggle and the player's own enable sits on the
+  player record; one controller-side answer covers both and every such provider uses it.
+- Saves: `_update_output_protocol_config`, `sendspin/bridge_manager.py:312`,
+  `chromecast/sendspin_bridge.py:1238` and the cascade at `controller.py:2657` store a protocol's
+  `enabled` through the player API and become protocol-scoped saves; a rejected save must not
+  leave a partial protocol record where there was none; `PLAYER_VALUE_KEYS` gains the player-owned
+  metadata of §1; `CONF_PLAYER_PROTOCOLS` gets its own tree and `_get_native_protocol_id` becomes
+  the lookup of the primary protocol over the edges (§1); the accessors serve a protocol without a
+  record from its in-memory config (§6e).
+- One id used for both scopes: the group protocols read the player key `power_control` with their
+  own id (`sync_group/player.py:151`, `universal_group/player.py:117`: a group created after the
+  cutover would not advertise power with the fake power control); `_get_output_channels`
+  (`streams/audio.py:5579`) reads the protocol key `output_channels` with the player's id as the
+  fallback of an audio output, and `_flow_restart_context` (`5679`) reads `flow_mode_sample_rate`
+  with a queue id; `setup_player` (`config/flows.py:574, 599-601`) addresses `setup_data` by the
+  API's player id while it lives on the protocol record; `sendspin_source/provider.py:665` asks a
+  protocol key through the player-addressed config API; the cross-scope sites in
+  `streams/controller.py` and the group providers' `CONF_POWER_CONTROL`.
+- Tests: with one tree a wrong scope cannot fail a test. After the split the silent cases (a read
+  that falls back to a default) each get a test that reads the value back for a player with a
+  minted id: group power control, the output-channel fallback, the save routing for a control-only
+  and for a virtual player, AirPlay's stored volume, the group member lists.
+
 ### PR 5. Auto-merge
 Scope: `merge_players(keep, absorb)` and `players/merge`; the automatic merge at attach when the
 younger player is unused: no custom config (no `name`, no user-editable key on its player record or
@@ -396,7 +456,9 @@ protocol's member lists, not synced, not in an active group); age = `created_at`
 is older, a frozen id wins a tie; the shared-domain veto stays. Legacy ids have one writer, the
 merge: the keeper gets the absorbed player's id and the absorbed player's own legacy ids,
 de-duplicated and persisted, and the merge rebuilds the reverse index itself before the absorbed
-config is deleted (otherwise it is rebuilt at setup and when a player config is deleted). A queue
+config is deleted (otherwise it is rebuilt at setup and when a player config is deleted); it also
+marks the keeper's state dirty, because the player caches `legacy_ids` until its next state update
+(server#7521). A queue
 command called inside the server with a legacy id (a provider setting that still names an absorbed
 player, such as the Party plugin's player or a Yandex Station target) indexes the queue store with
 the id it was given, so the public queue commands work on the queue's own id from their first line
@@ -496,7 +558,8 @@ another output plays touches nothing. Group release stays on the availability tr
 entries (`config/players.py:776`) and the player-owned metadata are player keys; every entry a
 protocol declares, the per-output audio entries (`output_channels`, `output_codec`,
 `prefer_wav_for_live_sources`, `http_profile`, `enable_icy_metadata`, `sample_rates`, `flow_mode`,
-`flow_mode_sample_rate` as rendered at `716-775`) and provider-written keys are protocol keys. The
+`flow_mode_sample_rate`, `crossfade_different_sample_rates` as rendered at `716-775`) and
+provider-written keys are protocol keys. The
 sync-group member lists therefore live on the sync-group protocol's record and the membership
 rewrites on remove and merge (`controller.py:2023`) read group protocol records. `cached_arp_mac` and
 `reported_mac` stay per protocol (`_resolve_mac_addresses`, `2805-2855`, runs per protocol at attach

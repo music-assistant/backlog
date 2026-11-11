@@ -244,6 +244,12 @@ never a second player or a new id.
   of the player the user picked, and the server decides where the request belongs: add, next and
   replace-next go to the queue the player is playing for; play and replace go to the player alone or
   to the owner's queue, by that setting.
+- *(decided 2026-11-11)* Removing a player whose device is still on the network resets it: after
+  the removal the controller asks the player's provider to discover again, so the device is found
+  again as a new player with default settings. A player that should stay away is disabled, not
+  removed. A removed group player is gone. The removal hook also reaches a protocol whose player is
+  not live (disabled, or held by its provider without being attached), since providers with a
+  configured device list or a registry of their own depend on it.
 - *(review)* Session-only protocols (decision 2) get no persisted config unless the user customised
   them, are purged on detach otherwise, are not offered in plugin pickers, and a second attach of
   the same protocol id replaces the first (music-assistant/support#6773, music-assistant/support#6822, music-assistant/support#6064).
