@@ -60,8 +60,10 @@ keeps following up.
   supported server line and writes one index per server line.
 - **The server's dependencies always win.** A version whose requirements clash with the server's
   is rejected by the registry.
-- **Hidden until switched on.** Updates are installed by the admin, with one switch to update
-  the whole community catalog automatically.
+- **One Catalog, community shown on request.** The Catalog has a switch to also show the
+  community catalog. Switching it on asks for an explicit confirmation with the own-risk text.
+  Updates are installed by the admin, with one switch to update the whole community catalog
+  automatically.
 - **A provider that moves out of the server takes its users along.** A server that already uses
   it fetches it from the registry after the upgrade.
 - **Built-in or community follows from where a provider loads from.** A manifest cannot claim
@@ -69,6 +71,9 @@ keeps following up.
 - **The server repository stays inviting.** No "community catalog by default". The requirements
   for a built-in provider are explained in the READMEs, the developer docs and an automatic
   comment on every new-provider pull request.
+- **A built-in provider without a maintainer can be moved by the team,** also when nobody takes
+  it over. Those are parked together in one repository in the Music Assistant organisation.
+- **The server part ships as soon as it is ready.**
 - **No pilot.** The first providers to move are those whose maintainer already develops and
   releases them from own repositories; the new-provider pull requests that are open today are
   the first admissions.
@@ -167,7 +172,8 @@ providers/<domain>/versions/<version>.json  generated per release
 index/<server line>.json                    generated, what servers read
 ```
 
-- `provider.json`: `domain`, `repository` (`owner/name`), the folder inside it, `maintainers`
+- `provider.json`: `domain`, `repository` (`owner/name`), the folder inside it and, for a
+  repository that holds several providers, the tag prefix of its releases, `maintainers`
   (GitHub handles), `status` (`listed`, `withdrawn` or `blocked`, with a reason and a link) and
   the admission record (who decided, when, which pull request).
 - `versions/<version>.json`: the release tag, the full commit SHA, a sha256 over the provider
@@ -191,7 +197,8 @@ A workflow in the registry runs every night and on request, in separate jobs tha
 files.
 
 **Fetch**, with the registry's own token: read the releases of every listed repository in
-batches and download each new one at its commit. GitHub pre-releases are ignored; a version
+batches and download each new one at its commit. When a provider has several new releases
+since the last run, only the newest is handled. GitHub pre-releases are ignored; a version
 meant for the nightly only is a normal release.
 
 **Check**, without any secret, because it executes code from the provider:
@@ -256,15 +263,18 @@ Declined at admission, and blocked when found later:
 - a provider whose only job is to load other providers or third-party source lists.
 
 Allowed, at the user's own risk: a small audience, an unofficial API used with the user's own
-account, reading a service's web pages, and code that would not pass review for the server.
+account, reading a service's web pages, free public content in the quality the service offers
+without a subscription, and code that would not pass review for the server.
 
 The rules get their own page next to the usage policy, with how to report a provider and what
 happens to a blocked one.
 
 ### 6. Server: installing and loading
 
-- **Switch.** An admin setting "Community catalog", off by default, with the own-risk text. A
-  second setting updates everything in it automatically, off by default. Switching the first
+- **Switch.** A switch where providers are added, later on the Catalog page, to also show the
+  community catalog. It is off by default, admin only, and switching it on asks for an explicit
+  confirmation with the own-risk text. A second setting updates everything in it
+  automatically, off by default. Switching the first
   one off hides the community catalog and stops new installs; installed community providers
   keep working until the admin removes them.
 - **Index.** While the switch is on or a community provider is installed, the server fetches
@@ -305,7 +315,7 @@ happens to a blocked one.
 
 ### 7. Frontend
 
-- The switch with its text, in the settings.
+- The switch where providers are added, later on the Catalog page, with its confirmation.
 - With the switch on, community providers appear where providers are added, with the Community
   badge, the maintainer, a link to the provider's own documentation and "Get help" pointing at
   the maintainer's support URL or repository.
@@ -352,8 +362,12 @@ An author works in an own repository, not in a fork of the server.
 - **Providers without an active maintainer.** The server repository asks for a maintainer who
   follows up. Where a provider has had no active maintainer for a long time and the team does
   the fixes, the team may move it; a year without codeowner activity is the working measure. It
-  is announced first, in the app and to the codeowner, so
-  that someone can take it over. What happens when nobody does is an open point.
+  is announced first, in the app and to the codeowner, so that someone can take it over. When
+  nobody does, it moves anyway, into one repository in the Music Assistant organisation that
+  parks every provider without a maintainer, and it is listed as looking for a maintainer.
+  This is code that shipped with the server before, so hosting it is nothing new. Whoever takes
+  a provider over moves it to an own repository. A parked provider that stops loading on a
+  server line and that nobody repairs leaves the index of that line.
 - Issues about a community provider that arrive in the support repository are pointed to the
   maintainer's support URL.
 
@@ -437,7 +451,7 @@ the pull request template that a codeowner may tick for an own bugfix.
 2. The rules for the community catalog and for contributing to the server (sections 5 and 10).
 3. The registry: repository, checks on every release, the index (sections 2 and 3).
 4. Admission (section 4).
-5. Server: install, load, update (section 6).
+5. Server: install, load, update (section 6), as soon as it is ready.
 6. Frontend (section 7).
 7. Developer workflow (section 8).
 8. Move the first providers (section 9).
@@ -465,14 +479,8 @@ Steps 3 to 7 can run side by side. Step 8 needs 3 to 6 in a release.
   ships a first test.
 - **GitHub is the download source.** An outage delays installs and updates. Installed providers
   keep running.
-- **Open: free, ad-supported public content** played outside the service's own player. The red
-  lines do not settle it. The team decides before the first such admission.
-- **Open: a provider nobody takes over.** Leave it built-in and marked unmaintained, park it in
-  a community organisation, or remove it after the announcement.
 - **Open: who decides admissions** besides the core team.
-- **Open: which release carries the server part.** The assumption is the first minor after 2.11.
-- **Open: the name.** "Community catalog" follows the Catalog page.
-- **Open: the cost of the red-line reading** for maintainers who release many times a month.
+- **Open: how fixes to parked providers are merged and released.**
 
 ## Verification
 

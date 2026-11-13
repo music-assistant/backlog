@@ -158,6 +158,8 @@ support repository with the provider label preset
   a Documentation button, "Get help" (help link above), "Request a change" (feature request
   forum) and Add. For a community provider it also shows the version and the install, update
   and remove actions.
+- A switch to also show the community catalog, with its confirmation
+  ([community-catalog.md](community-catalog.md), section 6).
 - The type pages' add buttons route to the catalog with `?types=` preselected, carrying the
   member restrictions (`multiInstanceOnly`, `selfServiceOnly`) as query flags, replacing
   `AddProviderDialog.vue`. The dialog's filters (builtin, core, deprecated, configured
