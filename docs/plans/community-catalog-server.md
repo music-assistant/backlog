@@ -72,7 +72,7 @@ references are `music-assistant/server` at `origin/dev` `ae091818e` (2026-11-13)
   `backup_exclude` contains `.cache/*`. Its AppArmor profile has a blanket `file,` rule.
 
 **Not verified**: native wheels loading from `/data` on a real HA app; the uv version in the published image; the
-first uv release with `--excludes` (present in 0.10.6 and 0.13.7); spikes ran on macOS arm64.
+spikes ran on macOS arm64.
 
 ## 2. Design
 
@@ -176,22 +176,30 @@ class InstalledProvider:               # one per domain in state.json
 
 ```python
 # dependencies.py, class CommunityDependencies(mass)
-async def resolve(self, requirements: Mapping[str, Sequence[str]]) -> list[str]  # pins to install
-def touches_imported(self, pins: Sequence[str]) -> bool
-async def sync(self, pins: Sequence[str]) -> None
+async def resolve(self, requirements: Mapping[str, Sequence[str]]) -> ResolvedDependencies
+async def touches_imported(self, pins: Sequence[str]) -> bool
+async def sync(self, resolved: ResolvedDependencies) -> None
 def activate(self) -> None                       # sys.path.append(<cache>/community_deps), once
-class DependencyConflict(MusicAssistantError)    # .culprit: "server" or a provider domain
+class ResolvedDependencies                       # pins: tuple[str, ...]; inputs_hash: str
+class DependencyConflict(MusicAssistantError)    # .domain is refused; .culprit: "server", another domain,
+                                                 # or the domain itself when it cannot be installed at all
 class DependenciesUnavailable(MusicAssistantError)  # uv or the network failed
 ```
 
 - Constraints at runtime: `importlib.metadata.distributions(path=[purelib, platlib])` of the running interpreter,
   written as `name==version` with a local version part (`+cpu`) stripped. Listing by path keeps the community folder
   itself out. This is what "the server's own pins" means in a running image, where no pin file exists.
-- `resolve` runs two passes over the union of all loadable community (and dev) requirements, common flags `--python
-  sys.executable --no-config --no-cache --only-binary :all: --no-header --no-annotate`:
-  1. `uv pip compile reqs.in --constraint server.txt`: proves the set is compatible with the server.
-  2. the same plus `--excludes server-names.txt -o requirements.lock`: the output is exactly what the server does not
-     have. The existing lock is the output file, so its pins stay unless a requirement forces a change (spike a6).
+- `resolve` first refuses every requirement that is not a package name with optional extras and version
+  specifiers: a URL or an option line would otherwise reach uv. It then runs one pass over the union of all loadable
+  community (and dev) requirements: `uv pip compile reqs.in --constraint server.txt -o <output>` with `--python
+  sys.executable --no-config --no-cache --only-binary :all: --no-header --no-annotate`. The output file is filled
+  with the current pins first, so they stay unless a requirement forces a change (spike a6). From the output the
+  server's own packages are dropped by name; what is left is what gets installed. The versions chosen are
+  therefore exactly the ones proven against the server.
+- Not `--excludes`: with the server's packages excluded uv ignores what other packages require of them, and picks
+  a newest version that needs a newer server package than the server has (spike a9).
+- `resolve` returns the installed set without calling uv when the hash of its inputs equals the one in the lock,
+  and `sync` skips uv when the pins equal the lock: `uv pip sync` contacts the index even when nothing changes.
 - Exit code 1 is a conflict, anything else non-zero is `DependenciesUnavailable` (spike a4/a5). On a conflict while
   adding provider X the culprit is found by resolving X alone (fails: `server`) and then X with each other provider
   (first failure names it); uv's cause line goes into the message.
@@ -199,13 +207,13 @@ class DependenciesUnavailable(MusicAssistantError)  # uv or the network failed
   and removes until the folder equals the lock (spike a7), so install, update, remove and a server upgrade are one
   code path.
 - `sys.path`: the folder is appended last with `sys.path.append`, not `site.addsitedir` (no `.pth` execution). A
-  server package always wins an import (spike a3), and with `--excludes` it is not even installed there.
+  server package always wins an import (spike a3), and it is not even installed there.
 - When: at start, before any community provider loads and with nothing imported from the folder yet, the set is
   resolved again whenever the hash of (constraints + requirements) differs from the one stored next to the lock. That
   covers a server upgrade. At runtime see 2.7; a removal leaves the folder alone until the next start.
 - Offline: `DependenciesUnavailable` at start keeps the folder as it is and loads; a provider that then fails to
   import shows that error, and the sync is retried at every daily check. Offline during an install refuses it.
-- `pyproject.toml`: raise the floor to `uv>=0.10.6` (lowest version verified with `--excludes`).
+- uv runs as `sys.executable -m uv`, the uv that is installed with the server. No newer uv is needed.
 - Rejected: `uv pip install --target` on the requirements directly (copies every package the server already has, spike
   a1; with torch it would pull the CUDA wheels from PyPI). Fails safely: a refused set changes nothing on disk; the
   lock file is written after a successful sync.
@@ -411,7 +419,7 @@ switch off (S6 adds one entry to the core settings list).
 | S1 | Entries without a provider are listed on request and removable | `controllers/config/providers.py`, `helpers.py`, `music_assistant/strings.json` | `tests/controllers/config/test_unavailable_providers.py`: default result unchanged; flag returns status and reason; get does not raise; remove runs the music/player cleanup; built-in still refused | M1 |
 | S2 | Second location, manifest (un)register, import-only load for community tier, module purge, mDNS refresh | `mass.py`, `helpers/util.py`, `controllers/config/flows.py`, `controllers/discovery/controller.py` | `tests/core/test_provider_locations.py`: relative and absolute imports from the second folder; built-in and core domains refused; `tier`/`builtin` forced; purge then import gives the new code; folder name ≠ domain refused. Adjust `tests/helpers/test_util.py`, `tests/controllers/config/test_setup_flows.py`, `tests/test_provider_manifests.py` | - |
 | S3 | Provider texts merged at load | `controllers/translations/__init__.py` | `tests/controllers/translations/test_provider_strings.py`: prefix forced; reference values fall back to common; locale file merged before and after the locale is loaded; unload removes | - |
-| S4 | Dependency resolve and sync | `controllers/community_catalog/dependencies.py`, `pyproject.toml` (uv floor), `requirements_all.txt` | `tests/controllers/community_catalog/test_dependencies.py`, hermetic: wheels built in the test, a module-level `_UV_INDEX_ARGS` patched to `--no-index --find-links`: server package excluded; clash with server names `server`; clash between two providers names the other; no wheel refused; lock kept stable; `touches_imported`; exit code ≠ 1 is unavailable | - |
+| S4 | Dependency resolve and sync | `controllers/community_catalog/dependencies.py` | `tests/controllers/community_catalog/test_dependencies.py`, hermetic: wheels built in the test, a module-level `_UV_INDEX_ARGS` patched to `--no-index --find-links`: server package excluded; clash with server names `server`; clash between two providers names the other; no wheel refused; a newer version that does not fit the server is passed over; a URL or option requirement refused; lock kept stable; `touches_imported`; exit code ≠ 1 is unavailable | - |
 | S5 | Controller skeleton and the dev-mode local folder | `controllers/community_catalog/{__init__,controller,constants}.py`, `mass.py`, `__main__.py`, `DEVELOPMENT.md` | `tests/controllers/community_catalog/test_dev_folder.py`: loads as community in dev mode; ignored outside dev mode; not in safe mode; `dev_mode` in server info | M2, S2-S4 |
 | S6 | The two settings, index client, kept copy, list command | `controller.py`, `index.py`, `models.py`, `strings.json`, `constants.py`, `helpers/build_info.py`, `controllers/dashboard/controller.py`, `translations/en.json` | `test_index.py`: line mapping for `0.0.0`, `.dev`, `b`, `rc`, `2.11.3`; ETag 304; 404/timeout/bad schema keep the copy; no request when off and nothing installed; `test_settings.py` | S5 |
 | S7 | Install, remove, gate at start, blocked at the daily check | `installer.py`, `gate.py`, `controller.py`, `README.md` | `test_installer.py`: only the folder is taken; symlink refused; hash mismatch leaves the installed version; hash equals a coreutils-computed fixture; crash between renames is repaired. `test_gate.py`: one case per table row. `test_controller.py`: blocked provider unloads, entry stays with reason; hand-copied folder does not load | S1, S6 |
@@ -428,7 +436,7 @@ What this step needs from other steps:
   per provider `status`/`reason`/`reason_url`/`repository`/`maintainers`/
   `manifest`/`icon_svg`/`latest`/`versions{commit, folder, content_hash, requirements}`/ `blocked_versions`); blocked
   and withdrawn entries keep their version records; the content hash of 2.3 computed from the GitHub tarball;
-  requirements limited to names with specifiers; the dependency check run as the two uv passes of 2.4 against the
+  requirements limited to names with specifiers; the dependency check run as the one uv pass of 2.4 against the
   image's installed distributions; a hand-written `nightly.json` with one test provider as early as possible.
 - **Developer workflow (#439)**: the provider sits in a folder named after its domain; the dev container passes its
   parent as `--dev-providers-dir` with `PYTHONDEVMODE=1`; the docs say a provider never writes into its own folder (it
@@ -454,7 +462,8 @@ in the main checkout's venv). A cold compile of four requirements takes 0.3 s.
 | a5 | compile with `--default-index http://127.0.0.1:9/simple` | exit **2**, `Request failed after 3 retries` |
 | a6 | compile `annotated-types>=0.5` with `-o out.lock` already holding `==0.6.0` | stays `0.6.0` (without the file: `0.8.0`) |
 | a7 | `uv pip install --target` of a newer pin; `uv pip sync --target T lock` | old version uninstalled and replaced; sync removes what the lock lacks |
-| a8 | compile with `--excludes <server names>` | output is exactly the 5 new packages; but a clash with an excluded package is **not** reported (exit 0), hence the two passes |
+| a8 | compile with `--excludes <server names>` | output is exactly the 5 new packages; but a clash with an excluded package is **not** reported (exit 0) |
+| a9 | server has `srv==1.0`; `foo 1.0` needs `srv>=1`, `foo 2.0` needs `srv>=2`; compile `foo` with the constraint, with and without `--excludes srv` | without: `foo==1.0`. With: `foo==2.0`, which does not fit the server. So `--excludes` is not used |
 
 **(b) Second `__path__` entry.** Package `ma.providers` with a built-in provider; a temp folder appended to
 `ma.providers.__path__`; a provider `comm` there using `from .const import …`, `from .sub.deep import …` (which uses
