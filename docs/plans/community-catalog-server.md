@@ -211,6 +211,9 @@ class DependenciesUnavailable(MusicAssistantError)  # uv or the network failed
 - `sync`: `uv pip sync requirements.lock --target <cache>/community_deps` with the same flags. It installs, replaces
   and removes until the folder equals the lock (spike a7), so install, update, remove and a server upgrade are one
   code path.
+- The lock also records the Python version and platform it was installed for (`cpython-314-linux-x86_64`). When
+  that differs, `resolve` runs again and `sync` passes `--reinstall`: a wheel with native code only fits the
+  interpreter it was installed for, and uv does not replace a package whose version is unchanged.
 - `sys.path`: the folder is appended last with `sys.path.append`, not `site.addsitedir` (no `.pth` execution). A
   server package always wins an import (spike a3), and it is not even installed there.
 - When: at start, before any community provider loads and with nothing imported from the folder yet, the set is
