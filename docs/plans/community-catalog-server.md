@@ -187,8 +187,13 @@ class DependenciesUnavailable(MusicAssistantError)  # uv or the network failed
 ```
 
 - Constraints at runtime: `importlib.metadata.distributions(path=[purelib, platlib])` of the running interpreter,
-  written as `name==version` with a local version part (`+cpu`) stripped. Listing by path keeps the community folder
-  itself out. This is what "the server's own pins" means in a running image, where no pin file exists.
+  written as `name==version` exactly as installed, local version part (`+cpu`) included. Listing by path keeps the
+  community folder itself out. This is what "the server's own pins" means in a running image, where no pin file
+  exists.
+- uv resolves against the indexes the image is built with: PyPI plus the PyTorch CPU index, with
+  `--index-strategy unsafe-best-match`. Against PyPI alone the server's `torch` would be resolved with the
+  requirements of the CUDA build, and a provider that needs torch would get 19 `nvidia-*`, `cuda-*` and `triton`
+  packages installed next to it (spike a10). A test keeps the two in step with `requirements_all.txt`.
 - `resolve` first refuses every requirement that is not a package name with optional extras and version
   specifiers: a URL or an option line would otherwise reach uv. It then runs one pass over the union of all loadable
   community (and dev) requirements: `uv pip compile reqs.in --constraint server.txt -o <output>` with `--python
@@ -463,6 +468,7 @@ in the main checkout's venv). A cold compile of four requirements takes 0.3 s.
 | a6 | compile `annotated-types>=0.5` with `-o out.lock` already holding `==0.6.0` | stays `0.6.0` (without the file: `0.8.0`) |
 | a7 | `uv pip install --target` of a newer pin; `uv pip sync --target T lock` | old version uninstalled and replaced; sync removes what the lock lacks |
 | a8 | compile with `--excludes <server names>` | output is exactly the 5 new packages; but a clash with an excluded package is **not** reported (exit 0) |
+| a10 | compile `torch` for Linux x86_64 with constraint `torch==2.13.0` on PyPI alone; then with `torch==2.13.0+cpu`, the PyTorch CPU index and `unsafe-best-match` | PyPI alone: 29 packages, 19 of them `nvidia-*`, `cuda-*` or `triton`. With the CPU index: 10 packages, none of those |
 | a9 | server has `srv==1.0`; `foo 1.0` needs `srv>=1`, `foo 2.0` needs `srv>=2`; compile `foo` with the constraint, with and without `--excludes srv` | without: `foo==1.0`. With: `foo==2.0`, which does not fit the server. So `--excludes` is not used |
 
 **(b) Second `__path__` entry.** Package `ma.providers` with a built-in provider; a temp folder appended to
