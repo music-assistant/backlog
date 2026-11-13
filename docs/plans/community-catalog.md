@@ -450,7 +450,8 @@ codeowner may tick for an own bugfix; it is picked up when codeowners ask for it
 2. The rules for the community catalog and for contributing to the server (sections 5 and 10).
 3. The registry: repository, checks on every release, the index (sections 2 and 3).
 4. Admission (section 4).
-5. Server: install, load, update (section 6), as soon as it is ready.
+5. Server: install, load, update (section 6), as soon as it is ready. The pull request sequence
+   is in [community-catalog-server.md](community-catalog-server.md).
 6. Frontend (section 7).
 7. Developer workflow (section 8).
 8. Move the first providers (section 9).
