@@ -436,14 +436,13 @@ nothing is added to the manifest in preparation, because there is no use for it 
 **Signing the index.** The index is served over HTTPS from a project domain. A signature can be
 added without changing the format.
 
-## Parked: codeowners merge their own built-in provider updates
+## Parked: codeowners ask for a backport of their own bugfix
 
-Designed as part of the Catalog plan and not started. It is revisited once the community
-catalog is live and the remaining review load on built-in providers is known. The design: a
-`/merge` command for a codeowner on a pull request that touches only that one provider, checked
-against the codeowners on the base branch, with green required checks, a clean dependency
-review, no open review thread and a clean bot review; new providers excluded; a backport box in
-the pull request template that a codeowner may tick for an own bugfix.
+Codeowners merge updates to their own built-in provider themselves: the review bot approves a
+clean pull request that stays inside one provider, and the codeowner merges it with a command
+(`DEVELOPMENT.md` in the server, "Getting your changes merged"). A new provider is still
+approved by a maintainer. What is parked is a backport box in the pull request template that a
+codeowner may tick for an own bugfix; it is picked up when codeowners ask for it.
 
 ## Phasing
 
