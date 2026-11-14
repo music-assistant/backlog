@@ -1,10 +1,10 @@
 # Community catalog: technical plan
 
-Status: proposal 2026-11-13. Owner: Marcel van der Veldt. This document is the technical
-companion of the "Community catalog" epic on the project board. It is written so it can be fed
-to an agent for implementation; every claim marked "verified" was checked in the server code at
-`7d5dd8e34` or in the referenced GitHub data on 2026-11-13. The Catalog page that presents
-built-in and community providers together is covered by
+Status: proposal 2026-11-13, updated 2026-11-14. Owner: Marcel van der Veldt. This document is
+the technical companion of the "Community catalog" epic on the project board. It is written so
+it can be fed to an agent for implementation; every claim marked "verified" was checked in the
+server code at `7d5dd8e34` or in the referenced GitHub data on 2026-11-13. The Catalog page that
+presents built-in and community providers together is covered by
 [provider-catalog.md](provider-catalog.md).
 
 Terminology: "provider" is the code and contributor term. A **built-in** provider ships in the
@@ -37,7 +37,7 @@ Built-in providers stay as they are. The server repository stays open to new pro
 requirements written down: real demand, documentation, the code standards and a maintainer who
 keeps following up.
 
-## Decisions taken with the maintainer (2026-11-13)
+## Decisions taken with the maintainer (2026-11-13/14)
 
 - **Two places.** Everything in the server repository is built-in, whether the team or a
   community developer maintains it. The community catalog is fully community-driven: own
@@ -64,6 +64,9 @@ keeps following up.
   community catalog. Switching it on asks for an explicit confirmation with the own-risk text.
   Updates are installed by the admin, with one switch to update the whole community catalog
   automatically.
+- **The Catalog is for discovery, the settings pages per type for managing** (2026-11-14). The
+  Catalog also shows what is installed, what has an update and what was updated recently. See
+  [provider-catalog.md](provider-catalog.md).
 - **A provider that moves out of the server takes its users along.** A server that already uses
   it fetches it from the registry after the upgrade.
 - **Built-in or community follows from where a provider loads from.** A manifest cannot claim
@@ -181,10 +184,10 @@ index/<server line>.json                    generated, what servers read
   per server line.
 - `index/<server line>.json` (`index/2.10.json` for a stable line, `index/beta.json`,
   `index/nightly.json`): for every listed provider the manifest data the app shows (name,
-  description, type, icon, maintainers, documentation, support URL), the newest version that
-  passed for this server line, the last five versions that passed, and per version the
-  repository, commit, content hash and requirements. It also carries the blocked and withdrawn
-  entries.
+  description, type, icon, maintainers, documentation, support URL), the date it entered the
+  catalog, the newest version that passed for this server line, the last five versions that
+  passed, and per version the repository, commit, content hash, requirements and release date.
+  It also carries the blocked and withdrawn entries.
 - The index files are published as static files behind a CDN on a project domain. A server
   reads one file, once a day, with an ETag and a random offset. No server calls the GitHub API.
 - Supported server lines are the current stable line, the beta and the nightly. When a new
@@ -271,12 +274,11 @@ happens to a blocked one.
 
 ### 6. Server: installing and loading
 
-- **Switch.** A switch where providers are added, later on the Catalog page, to also show the
-  community catalog. It is off by default, admin only, and switching it on asks for an explicit
-  confirmation with the own-risk text. A second setting updates everything in it
-  automatically, off by default. Switching the first
-  one off hides the community catalog and stops new installs; installed community providers
-  keep working until the admin removes them.
+- **Switch.** A switch on the Catalog page to also show the community catalog. It is off by
+  default, admin only, and switching it on asks for an explicit confirmation with the own-risk
+  text. A second setting updates everything in it automatically, off by default. Switching the
+  first one off hides the community catalog and stops new installs; installed community
+  providers keep working until the admin removes them.
 - **Index.** While the switch is on or a community provider is installed, the server fetches
   the index of its server line at start and once a day, and keeps the last copy. It picks the
   file from its own version: the nightly, the beta, or the stable minor line.
@@ -315,14 +317,19 @@ happens to a blocked one.
 
 ### 7. Frontend
 
-- The switch where providers are added, later on the Catalog page, with its confirmation.
-- With the switch on, community providers appear where providers are added, with the Community
-  badge, the maintainer, a link to the provider's own documentation and "Get help" pointing at
-  the maintainer's support URL or repository.
-- Installed community providers show their version, an update action and a remove action.
+- The switch on the Catalog page ([provider-catalog.md](provider-catalog.md), section 2), with
+  its confirmation.
+- With the switch on, community providers appear in the Catalog, with the Community badge, the
+  maintainer, a link to the provider's own documentation and "Get help" pointing at the
+  maintainer's support URL or repository.
+- The Catalog shows which installed community providers have an update and which community
+  providers are new or were updated recently. Installed community providers show their version
+  and an update action. Where one is removed is an open point in
+  [provider-catalog.md](provider-catalog.md).
 - Notices for a provider that was blocked, could not be loaded on this server version, or moved
   out of the server.
-- The Catalog page later presents the same data ([provider-catalog.md](provider-catalog.md)).
+- The settings pages per type stay the place to manage what is set up; a community provider is
+  managed there like any other.
 
 ### 8. Developer workflow
 
@@ -452,7 +459,8 @@ codeowner may tick for an own bugfix; it is picked up when codeowners ask for it
 4. Admission (section 4).
 5. Server: install, load, update (section 6), as soon as it is ready. The pull request sequence
    is in [community-catalog-server.md](community-catalog-server.md).
-6. Frontend (section 7).
+6. Frontend (section 7), on the Catalog page, which is built first
+   ([provider-catalog.md](provider-catalog.md), phase 1).
 7. Developer workflow (section 8).
 8. Move the first providers (section 9).
 9. Providers without an active maintainer (section 9).

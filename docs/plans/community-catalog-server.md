@@ -125,10 +125,12 @@ spikes ran on macOS arm64.
 
 ```python
 class IndexVersion: commit: str; folder: str; content_hash: str; requirements: list[str]
+                    released: str  # when the version was released
 class IndexProvider:
     status: IndexStatus                # listed | withdrawn | blocked
     reason: str | None; reason_url: str | None
     repository: str; maintainers: list[str]; icon_svg: str | None
+    added: str                         # when the provider entered the catalog
     manifest: dict[str, Any]           # ProviderManifest snapshot of `latest`
     latest: str | None                 # newest version that passed for this line
     versions: dict[str, IndexVersion]
@@ -389,6 +391,8 @@ class CommunityProvider(DataClassDictMixin):
     state: CommunityProviderState   # available | installed | update_available | restart_required | blocked
                                     # | unavailable | withdrawn
     installed_version: str | None; latest_version: str | None; pending_version: str | None
+    added: str | None               # when it entered the catalog
+    released: str | None            # when latest_version was released
     reason: str | None; reason_url: str | None; notice: str | None
 ```
 
@@ -441,8 +445,9 @@ manual end-to-end run uses a launcher script outside the package that patches th
 
 What this step needs from other steps:
 - **Registry (#435)**: the final index URL with a version segment; the index fields of 2.2 (`schema`, `server_line`,
-  per provider `status`/`reason`/`reason_url`/`repository`/`maintainers`/
-  `manifest`/`icon_svg`/`latest`/`versions{commit, folder, content_hash, requirements}`/ `blocked_versions`); blocked
+  per provider `status`/`reason`/`reason_url`/`repository`/`maintainers`/`added`/
+  `manifest`/`icon_svg`/`latest`/`versions{commit, folder, content_hash, requirements, released}`/
+  `blocked_versions`); blocked
   and withdrawn entries keep their version records; the content hash of 2.3 computed from the GitHub tarball;
   requirements limited to names with specifiers; the dependency check run as the one uv pass of 2.4 against the
   image's installed distributions; a hand-written `nightly.json` with one test provider as early as possible.
