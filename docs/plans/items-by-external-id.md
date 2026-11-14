@@ -21,7 +21,13 @@ No database or model change, no new setting, no background job.
 
 ## Decisions
 
-None taken yet; see "Open questions". The plan is written with the recommended option of each.
+Taken with the maintainer on 2026-11-14:
+
+- Frontend: one generic `isExternalItem` replaces `isMusicBrainzItem`. The provider value
+  `musicbrainz` is only accepted inside it, for as long as the server still sends it (section 8).
+
+The other choices are still open, see "Open questions". The plan is written with the
+recommended option of each.
 
 ## Requirements
 
@@ -243,11 +249,21 @@ permanent alias; no migration.
 
 ## 8. Frontend
 
-A generic `isExternalItem` (`provider === "external"`) beside `isMusicBrainzItem`. External
-albums take the existing discography path (`AlbumDetails.vue:421-438` generalised to
-`resolveExternalItem`). External tracks: playable, open via `openMusicBrainzItem` (renamed
-`openExternalItem`), muted styling, no favourite/playlist/library actions until resolved (an
-"add to library" resolves first and is allowed, as for albums today).
+One generic `isExternalItem` replaces `isMusicBrainzItem`. Every call site asks the same thing
+(has this item been found yet) and none of them is about MusicBrainz: `ListviewItem.vue`,
+`EditorialMediaCard.vue`, `ReleaseShelf.vue`, `ItemsListing.vue`, `ItemContextMenu.vue` and
+`helpers/media_item_actions.ts`. Until the server switches the discography (step 6) the helper
+also accepts the provider value `musicbrainz`, because the server still sends it for those
+albums. That one value goes in the same release as step 6: the frontend always ships with its
+server, so it never meets an older one.
+
+Whether such an item can be played comes from the server's `is_playable` (false for an album,
+true for a track), not from the helper, so the extra `!isMusicBrainzItem` in the play menu
+goes. External albums take the existing discography path (`AlbumDetails.vue:421-438`
+generalised to `resolveExternalItem`, which passes the item's own provider and id). External
+tracks open via `openMusicBrainzItem` (renamed `openExternalItem`), get the muted styling, and
+have no favourite, playlist or library actions until resolved (an "add to library" resolves
+first and is allowed, as for albums today).
 
 ## 9. What stays
 
@@ -279,7 +295,7 @@ readrate pacing and every other usage-policy guard. `MIN_SCHEMA_VERSION` and
 | 3 | #455 | server | Top tracks from ListenBrainz | 1, 2 released together | medium |
 | 4 | #456 | server | Resolve external tracks when the queue loads them | 1 | small |
 | 5 | #457 | mobile-app | Understand external items | 1 | small (other team) |
-| 6 | #458 | server | Discography lists external albums | 5 released | tiny |
+| 6 | #458 | server, frontend | Discography lists external albums; the frontend drops the `musicbrainz` value | 5 released | tiny |
 
 ## Open questions
 
@@ -325,8 +341,7 @@ route). b) No album link for external tracks. Recommendation: b) first, a) Later
 
 ## Later
 
-- Remove the frontend's and the app's `musicbrainz` checks once all supported servers send
-  `external`.
+- Remove the app's `musicbrainz` handling once every supported server sends `external`.
 - External items for other lists: recommendations, charts, imported playlists by ISRC, similar
   tracks from open data.
 - Lazy resolution for an external album in the queue (play an unresolved album directly).
