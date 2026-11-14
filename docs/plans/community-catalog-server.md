@@ -97,7 +97,7 @@ spikes ran on macOS arm64.
 - Two `ConfigEntry`s on the controller: `community_catalog_enabled` (S6) and `auto_update` (S8, together with what
   it does), both `BOOLEAN`, default `False`, `hidden=True`, `auto_update` with
   `depends_on="community_catalog_enabled"`. The key cannot be `enabled`: `Config.update` in the models takes
-  `enabled` and `name` for the fields of a provider config. It is not `catalog_enabled` either: the Catalog is
+  `enabled` and `name` for the fields of a provider config. It is not `catalog_enabled` either: the Marketplace is
   always there, what is switched on is the community catalog. Label and description live in the controller's
   `strings.json`; the description of `community_catalog_enabled` is the own-risk
   text, so the frontend dialog shows a server-translated text. Saved through the existing `config/core/save`
@@ -526,7 +526,7 @@ tarball, from the extracted folder and with `find | sort | shasum` is identical 
 3. **The dependency folder is `<cache>/community_deps`** (`/data/.cache/community_deps` in Docker and the Home
    Assistant app). It survives image updates and stays out of Home Assistant backups; after a restore the wheels are
    fetched again.
-4. **The two settings are hidden entries.** The switch on the Catalog, with its confirmation, is the only place to
+4. **The two settings are hidden entries.** The switch on the Marketplace, with its confirmation, is the only place to
    turn the community catalog on.
 5. **`ServerInfoMessage.dev_mode` is added**, with an `API_SCHEMA_VERSION` bump, in the pull request that fills it.
 6. **The registry is `music-assistant/community-catalog`.**

@@ -3,7 +3,7 @@
 Status: proposal 2026-11-13, updated 2026-11-14. Owner: Marcel van der Veldt. This document is
 the technical companion of the "Community catalog" epic on the project board. It is written so
 it can be fed to an agent for implementation; every claim marked "verified" was checked in the
-server code at `7d5dd8e34` or in the referenced GitHub data on 2026-11-13. The Catalog page that
+server code at `7d5dd8e34` or in the referenced GitHub data on 2026-11-13. The Marketplace page that
 presents built-in and community providers together is covered by
 [provider-catalog.md](provider-catalog.md).
 
@@ -60,12 +60,12 @@ keeps following up.
   supported server line and writes one index per server line.
 - **The server's dependencies always win.** A version whose requirements clash with the server's
   is rejected by the registry.
-- **One Catalog, community shown on request.** The Catalog has a switch to also show the
+- **One Marketplace, community shown on request.** The Marketplace has a switch to also show the
   community catalog. Switching it on asks for an explicit confirmation with the own-risk text.
   Updates are installed by the admin, with one switch to update the whole community catalog
   automatically.
-- **The Catalog is for discovery, the settings pages per type for managing** (2026-11-14). The
-  Catalog also shows what is installed, what has an update and what was updated recently. See
+- **The Marketplace is for discovery, the settings pages per type for managing** (2026-11-14). The
+  Marketplace also shows what is installed, what has an update and what was updated recently. See
   [provider-catalog.md](provider-catalog.md).
 - **A provider that moves out of the server takes its users along.** A server that already uses
   it fetches it from the registry after the upgrade.
@@ -274,9 +274,9 @@ happens to a blocked one.
 
 ### 6. Server: installing and loading
 
-- **Switch.** The Catalog is always there for everyone; what an admin switches on is the
+- **Switch.** The Marketplace is always there for everyone; what an admin switches on is the
   community catalog. It is off by default, admin only, and switching it on asks for an explicit
-  confirmation with the own-risk text. A banner on the Catalog page lets an admin discover it
+  confirmation with the own-risk text. A banner on the Marketplace page lets an admin discover it
   (switch on, or do not show again); the lasting control is in the page's top right menu, with
   the other options of the community catalog. A second setting updates everything in it
   automatically, off by default. Switching the community catalog off is refused while
@@ -320,12 +320,12 @@ happens to a blocked one.
 
 ### 7. Frontend
 
-- The switch on the Catalog page ([provider-catalog.md](provider-catalog.md), section 2), with
+- The switch on the Marketplace page ([provider-catalog.md](provider-catalog.md), section 2), with
   its confirmation.
-- With the switch on, community providers appear in the Catalog, with the Community badge, the
+- With the switch on, community providers appear in the Marketplace, with the Community badge, the
   maintainer, a link to the provider's own documentation and "Get help" pointing at the
   maintainer's support URL or repository.
-- The Catalog shows which installed community providers have an update and which community
+- The Marketplace shows which installed community providers have an update and which community
   providers are new or were updated recently. Installed community providers show their version
   and an update action. Where one is removed is an open point in
   [provider-catalog.md](provider-catalog.md).
@@ -462,7 +462,7 @@ codeowner may tick for an own bugfix; it is picked up when codeowners ask for it
 4. Admission (section 4).
 5. Server: install, load, update (section 6), as soon as it is ready. The pull request sequence
    is in [community-catalog-server.md](community-catalog-server.md).
-6. Frontend (section 7), on the Catalog page, which is built first
+6. Frontend (section 7), on the Marketplace page, which is built first
    ([provider-catalog.md](provider-catalog.md), phase 1).
 7. Developer workflow (section 8).
 8. Move the first providers (section 9).
