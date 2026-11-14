@@ -94,17 +94,21 @@ spikes ran on macOS arm64.
 
 ### 2.1 The two settings
 
-- Two `ConfigEntry`s on the controller: `catalog_enabled` (S6) and `auto_update` (S8, together with what it does),
-  both `BOOLEAN`, default `False`, `hidden=True`, `auto_update` with `depends_on="catalog_enabled"`. The key cannot
-  be `enabled`: `Config.update` in the models takes `enabled` and `name` for the fields of a provider config. Label
-  and description live in the controller's `strings.json`; the description of `catalog_enabled` is the own-risk
+- Two `ConfigEntry`s on the controller: `community_catalog_enabled` (S6) and `auto_update` (S8, together with what
+  it does), both `BOOLEAN`, default `False`, `hidden=True`, `auto_update` with
+  `depends_on="community_catalog_enabled"`. The key cannot be `enabled`: `Config.update` in the models takes
+  `enabled` and `name` for the fields of a provider config. It is not `catalog_enabled` either: the Catalog is
+  always there, what is switched on is the community catalog. Label and description live in the controller's
+  `strings.json`; the description of `community_catalog_enabled` is the own-risk
   text, so the frontend dialog shows a server-translated text. Saved through the existing `config/core/save`
   (`CONFIG_CORE_WRITE`, admin only).
 - The controller is not added to `CONFIGURABLE_CORE_CONTROLLERS`. `config/core/get`, `get_entries` and `save` look a
   controller up by its domain and work without it; the membership only puts a controller in the `config/core` list
   and among the manifests, and the app must not show a "Community catalog" item in its core settings.
-- `update_config`: the switch turning on triggers an index fetch. Turning it off unloads nothing; the list then
-  returns installed providers only and `install` of a new domain is refused.
+- `update_config`: the switch turning on triggers an index fetch. Turning it off is refused with
+  `ActionUnavailable` while a provider is installed that is not in `state.moved` (the server installed those by
+  itself); the check comes before the new config is taken, so `config/core/save` puts the stored switch back. With
+  the switch off the list returns installed providers only (moved ones) and `install` of a new domain is refused.
 - `_needs_index() -> bool`: the switch, or `state.installed`, or a config entry of a moved domain. False means no
   request and no timer.
 - Rejected: a top-level settings key with own commands (a second way to store settings). Fails safely: an absent block
@@ -117,7 +121,9 @@ spikes ran on macOS arm64.
   and both use it.
 - `INDEX_URL: Final = "https://music-assistant.github.io/community-catalog/v1/{line}.json"`, a module constant. No
   setting, no environment variable, also not in dev mode. The host is the GitHub Pages site of the registry
-  repository; the registry step confirms or replaces it before the app shows the switch.
+  repository for now (decided 2026-11-14): nightlies update themselves, so it can still change while it is tested
+  there. The final host, GitHub Pages or a project domain, is chosen before the first beta that carries the
+  community catalog, because every released server version keeps reading the address it was built with.
 - `IndexClient.fetch() -> bool` (changed): `mass.http_session`, `If-None-Match` from `state.index_etag`, 10 s timeout.
   200 with `schema == 1` and matching `server_line` is written atomically to `index.json`; 304 keeps the copy;
   anything else (404 for a line without index, timeout, parse error, unknown schema) keeps the copy and logs.
@@ -416,7 +422,7 @@ class CommunityProvider(DataClassDictMixin):
 
 | What | Where | Existing install on upgrade |
 |---|---|---|
-| `catalog_enabled`, `auto_update` | `settings.json` → `core/community_catalog/values` | absent, reads as off; written on first save |
+| `community_catalog_enabled`, `auto_update` | `settings.json` → `core/community_catalog/values` | absent, reads as off; written on first save |
 | live code, `.previous/`, `.staging/` | `<data>/community_providers/` | not created until the first fetch or install |
 | `state.json` (`index_etag`, `installed`) | same folder | absent |
 | `index.json` (last fetched index) | same folder | absent |
@@ -433,7 +439,8 @@ class CommunityProvider(DataClassDictMixin):
 ## 4. Sequence of pull requests
 
 Each PR targets `dev`, is `maintenance` until the frontend makes it visible, and changes nothing for a server with the
-switch off.
+switch off. (As built: S1 and S5 to S9 went through the branch `feature/community-catalog` and reach `dev` as one
+pull request, server#7641, labelled `new-feature`.)
 
 | # | Goal | Files | Tests | Needs first |
 |---|---|---|---|---|
@@ -467,7 +474,8 @@ What this step needs from other steps:
   parent as `--dev-providers-dir` with `PYTHONDEVMODE=1`; the docs say a provider never writes into its own folder (it
   would change the hash).
 - **Frontend (#438)**: `include_unavailable`, the six commands, the event, `dev_mode`, the confirm dialog on the
-  hidden `catalog_enabled` entry (read with `config/core/get_entries`, domain `community_catalog`), and the icon of
+  hidden `community_catalog_enabled` entry (read with `config/core/get_entries`, domain `community_catalog`), the
+  banner and the top right menu that hold the switch, the server's refusal to switch off, and the icon of
   a listed provider shown as an image from its data URI.
 - **Moving (#440)**: fills `MOVED_PROVIDER_DOMAINS`.
 

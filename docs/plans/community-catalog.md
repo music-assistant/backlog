@@ -91,8 +91,8 @@ keeps following up.
 
 - A server makes no request to the registry while the community catalog is off and no community
   provider is installed.
-- Switching the community catalog off hides it and stops new installs. Installed community
-  providers keep working until the admin removes them.
+- The community catalog can only be switched off while nothing the admin installed from it is
+  still installed. A provider the server installed by itself because it moved does not count.
 - A server installs a community provider only when the index for its own server line lists that
   exact version, and only after the downloaded files match the content hash in the index.
 - A blocked provider or version is not loaded. Its settings and library items are kept.
@@ -274,11 +274,14 @@ happens to a blocked one.
 
 ### 6. Server: installing and loading
 
-- **Switch.** A switch on the Catalog page to also show the community catalog. It is off by
-  default, admin only, and switching it on asks for an explicit confirmation with the own-risk
-  text. A second setting updates everything in it automatically, off by default. Switching the
-  first one off hides the community catalog and stops new installs; installed community
-  providers keep working until the admin removes them.
+- **Switch.** The Catalog is always there for everyone; what an admin switches on is the
+  community catalog. It is off by default, admin only, and switching it on asks for an explicit
+  confirmation with the own-risk text. A banner on the Catalog page lets an admin discover it
+  (switch on, or do not show again); the lasting control is in the page's top right menu, with
+  the other options of the community catalog. A second setting updates everything in it
+  automatically, off by default. Switching the community catalog off is refused while
+  something the admin installed from it is still installed; a provider the server installed by
+  itself because it moved does not count.
 - **Index.** While the switch is on or a community provider is installed, the server fetches
   the index of its server line at start and once a day, and keeps the last copy. It picks the
   file from its own version: the nightly, the beta, or the stable minor line.
@@ -496,8 +499,9 @@ Steps 3 to 7 can run side by side. Step 8 needs 3 to 6 in a release.
   shows no Community badge; one with a person as codeowner shows the maintainer line.
 - With the switch off and no community provider installed, the server makes no request to the
   registry.
-- Switching the community catalog off leaves installed community providers working and
-  updatable, and offers no new installs.
+- Switching the community catalog off is refused while a provider the admin installed is still
+  installed, and works once those are removed. A moved provider the server installed by itself
+  keeps working with the switch off.
 - Installing a version that the index of the server's line does not list is refused. A download
   whose content hash differs is refused and leaves the installed version in place.
 - A provider marked blocked in the index is unloaded at the next daily check and at start, its
