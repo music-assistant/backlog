@@ -97,7 +97,7 @@ provider the user has, a name/artist check. Verified.
 metadata/plugin providers only when those return nothing. Last.fm's `get_artist_toptracks`
 (`providers/lastfm_recommendations/__init__.py:237-245`) resolves each of up to 25 tracks with
 `get_or_resolve_track` (`:291-313`, a search per title on the user's services, cached). The
-library-only reduction is a separate change and is assumed to have landed.
+library-only reduction is a separate change (server#7663) and is assumed to have landed.
 
 **Playing.** `play_media` resolves every entry sequentially through `_resolve_play_media_entry`
 (`controllers/player_queues/queue_loader.py:919-931, 1167-1190`), inside
