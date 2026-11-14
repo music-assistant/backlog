@@ -17,7 +17,7 @@ every one on the user's services, which is being cut back to library-only matchi
 This plan adds one generic form for an item known only by an external id, a resolver that turns
 it into a real item when the user opens, adds or plays it, a ListenBrainz-ranked top tracks list
 built on it, lazy resolution in the queue, and moves the discography onto the same form right
-away. No database or model change, no new setting, no background job.
+away. No library database or model change, no new setting, no background job.
 
 ## Decisions
 
@@ -38,6 +38,12 @@ Taken with the maintainer on 2026-11-14:
 - An external track carries its album as an `ItemMapping` built from the list answer, at no
   extra request; the album is resolved by its release id only when it is opened.
 - Frontend: one generic `isExternalItem` replaces `isMusicBrainzItem` (section 8).
+- What an external id resolved to is remembered as service plus item id, behind one pair of
+  functions (section 2).
+- No catalogue of full library rows for items that merely pass by. The cache already answers
+  a repeated request, while a row per listed track costs about 5 KB and 18 to 40 statements
+  and widens every background scan. The identity between services, the one real gain, goes
+  into a small table as the last step (section 10).
 
 ## Requirements
 
@@ -193,9 +199,14 @@ album branch (`get_release_details` and the release's links) is the release id r
 the media type's controller and raises `MediaNotFoundError` on None. The `musicbrainz` branch
 (`controller.py:1556-1565`) becomes an alias that maps to the release group route.
 
-Caching: the resolved item's URI is cached per external id for 7 days (`use_cache`, keyed with
-the user's visible source set so a household member never gets another member's account). A
-cached URI that no longer resolves is dropped and the chain runs again.
+Remembering: what an external id resolved to sits behind one pair of functions on the
+controller (look up, store); callers never touch the cache themselves. The result is stored
+as provider domain plus item id, the content of a provider mapping, not as a URI bound to one
+account: a streaming catalogue id is the same for every account of a service, so one
+remembered result serves the whole household. The user's visible sources are applied when it
+is read, so a household member never gets another member's account. It is kept in the cache
+for 7 days; a result that no longer resolves is dropped and the chain runs again. The
+identity table of section 10 later takes the cache's place behind the same two functions.
 
 ## 3. Top tracks from ListenBrainz
 
@@ -293,6 +304,26 @@ discography listing and its cost, Last.fm for artists without an MBID, the throt
 readrate pacing and every other usage-policy guard. `MIN_SCHEMA_VERSION` and
 `API_SCHEMA_VERSION` are untouched.
 
+## 10. Identity table (last step)
+
+A small table that keeps which item on a music service belongs to an external id: external id
+(type, value, media type) to provider domain and item id, with a last-seen date. About 0.2 KB
+per entry (estimate). It holds ids only: no names, no artwork, no library rows, no merging and
+no link tables.
+
+- Filled without a single extra request, from three sources: resolver results, matches
+  between services (including the playback fallback for a track outside the library) and the
+  ISRC, barcode or MusicBrainz id of items in listings that were fetched anyway. One bulk
+  write per listing page.
+- Read by the resolver before the MusicBrainz links and the ISRC or barcode lookup, and by the
+  match between services before its ISRC lookup or search.
+- Entries are removed by last-seen date. The table can be emptied at any time and is learned
+  again, so it lives in the cache database: `library.db`, its schema version and its backups
+  stay untouched.
+
+It is built once the resolver is in use and it is clear how often a lookup repeats after the
+7 days of section 2. How long an entry may be kept is decided then.
+
 ## Testing
 
 - Resolver: library hit by recording id and by ISRC makes no requests; link hit makes one
@@ -319,6 +350,7 @@ readrate pacing and every other usage-policy guard. `MIN_SCHEMA_VERSION` and
 | 4 | #455 | server | Top tracks from ListenBrainz | 1, 2 | medium |
 | 5 | #456 | server | Resolve external tracks when the queue loads them | 1 | small |
 | 6 | #457 | mobile-app | Understand external items | 1 | small (other team) |
+| 7 | #460 | server | Remember which item on a service belongs to an external id | 1, in use | small |
 
 ## Still to find out
 
