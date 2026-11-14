@@ -94,13 +94,18 @@ spikes ran on macOS arm64.
 
 ### 2.1 The two settings
 
-- Two `ConfigEntry`s on the controller, added to `CONFIGURABLE_CORE_CONTROLLERS`: `enabled` and `auto_update`
-  (`BOOLEAN`, default `False`, `auto_update` with `depends_on="enabled"`), both `hidden=True`. Label and description
-  live in the controller's `strings.json`; the description of `enabled` is the own-risk text, so the frontend dialog
-  shows a server-translated text. Saved through the existing `config/core/save` (`CONFIG_CORE_WRITE`, admin only).
-- `update_config`: `enabled` turning on triggers an index fetch. Turning it off unloads nothing; the list then returns
-  installed providers only and `install` of a new domain is refused.
-- `_needs_index() -> bool`: `enabled`, or `state.installed`, or a config entry of a moved domain. False means no
+- Two `ConfigEntry`s on the controller: `catalog_enabled` (S6) and `auto_update` (S8, together with what it does),
+  both `BOOLEAN`, default `False`, `hidden=True`, `auto_update` with `depends_on="catalog_enabled"`. The key cannot
+  be `enabled`: `Config.update` in the models takes `enabled` and `name` for the fields of a provider config. Label
+  and description live in the controller's `strings.json`; the description of `catalog_enabled` is the own-risk
+  text, so the frontend dialog shows a server-translated text. Saved through the existing `config/core/save`
+  (`CONFIG_CORE_WRITE`, admin only).
+- The controller is not added to `CONFIGURABLE_CORE_CONTROLLERS`. `config/core/get`, `get_entries` and `save` look a
+  controller up by its domain and work without it; the membership only puts a controller in the `config/core` list
+  and among the manifests, and the app must not show a "Community catalog" item in its core settings.
+- `update_config`: the switch turning on triggers an index fetch. Turning it off unloads nothing; the list then
+  returns installed providers only and `install` of a new domain is refused.
+- `_needs_index() -> bool`: the switch, or `state.installed`, or a config entry of a moved domain. False means no
   request and no timer.
 - Rejected: a top-level settings key with own commands (a second way to store settings). Fails safely: an absent block
   reads as off.
@@ -110,15 +115,17 @@ spikes ran on macOS arm64.
 - `server_line(version) -> str`: `0.0.0` or `.dev` → `nightly`; `b` or `rc` → `beta`; else `<major>.<minor>`. The
   channel rule moves from `DashboardController._frontend_channel` to `helpers/build_info.py::release_channel(version)`
   and both use it.
-- `INDEX_URL: Final = "https://<project host>/community/v1/{line}.json"`, a module constant. No setting, no
-  environment variable, also not in dev mode.
+- `INDEX_URL: Final = "https://music-assistant.github.io/community-catalog/v1/{line}.json"`, a module constant. No
+  setting, no environment variable, also not in dev mode. The host is the GitHub Pages site of the registry
+  repository; the registry step confirms or replaces it before the app shows the switch.
 - `IndexClient.fetch() -> bool` (changed): `mass.http_session`, `If-None-Match` from `state.index_etag`, 10 s timeout.
   200 with `schema == 1` and matching `server_line` is written atomically to `index.json`; 304 keeps the copy;
   anything else (404 for a line without index, timeout, parse error, unknown schema) keeps the copy and logs.
 - Timing: once at start in a background task, then `mass.call_later(24 h + random 0-60 min)`, private timer. Rejected:
   a scheduled task (an admin can disable it, which would disable the kill switch).
-- Kept copy: `index.json` plus `index_line` in `state.json`. A copy of another line is used for its blocks only (2.6).
-  No copy at all: no community provider loads (fail closed).
+- Kept copy: `index.json`, which carries its own `server_line`; `state.json` holds the ETag. A copy of another line
+  is used for its blocks only (2.6) and lists nothing to install. No copy at all: no community provider loads (fail
+  closed).
 - Models stay server-local in `models.py` (precedent `controllers/storage/models.py`); only two enum values and
   `dev_mode` go to `music-assistant-models` (section 4, M1 and M2). The server never compares version strings: `latest` is
   the registry's call. A withdrawn entry keeps loading what is installed and offers no install or update.
@@ -377,7 +384,7 @@ All on the controller (added to the list in `mass._register_api_commands`), `Sco
 
 | Command | Arguments | Result |
 |---|---|---|
-| `community_catalog/providers` | - | `list[CommunityProvider]`: installed ones always, the rest of the index when `enabled` |
+| `community_catalog/providers` | - | `list[CommunityProvider]`: installed ones always, the rest of the index when switched on |
 | `community_catalog/install` | `domain` | `CommunityProvider`; newest listed version; refused when off and not installed |
 | `community_catalog/update` | `domain: str \| None` | `list[CommunityProvider]`; `None` updates all |
 | `community_catalog/remove` | `domain` | `None`; unloads, deletes code, keeps config entries |
@@ -386,7 +393,8 @@ All on the controller (added to the list in `mass._register_api_commands`), `Sco
 
 ```python
 class CommunityProvider(DataClassDictMixin):
-    domain: str; repository: str; maintainers: list[str]; icon_svg: str | None
+    domain: str; repository: str; maintainers: list[str]
+    icon: str | None                # a data URI, like providers/icon returns
     manifest: ProviderManifest      # installed folder, else the index snapshot
     state: CommunityProviderState   # available | installed | update_available | restart_required | blocked
                                     # | unavailable | withdrawn
@@ -398,6 +406,9 @@ class CommunityProvider(DataClassDictMixin):
 
 - Install does not create a config entry: the manifest appears in `providers/manifests` and the admin adds the
   provider through the existing flow.
+- An index entry is listed as available only with status `listed` and a version record for its `latest`.
+- The icon of the index (`icon_svg`, SVG text) is handed to clients as a data URI only. A client shows it as an
+  image; markup from a community provider never reaches a page.
 - `EventType.COMMUNITY_CATALOG_UPDATED` (no data) after anything that changes the list or the registered manifests;
   the frontend refetches the list and `providers/manifests`. Loading and unloading keep sending `PROVIDERS_UPDATED`.
 
@@ -405,9 +416,9 @@ class CommunityProvider(DataClassDictMixin):
 
 | What | Where | Existing install on upgrade |
 |---|---|---|
-| `enabled`, `auto_update` (and the default log level entry) | `settings.json` → `core/community_catalog/values` | absent, reads as off; written on first save |
+| `catalog_enabled`, `auto_update` | `settings.json` → `core/community_catalog/values` | absent, reads as off; written on first save |
 | live code, `.previous/`, `.staging/` | `<data>/community_providers/` | not created until the first fetch or install |
-| `state.json` (`index_etag`, `index_line`, `installed`) | same folder | absent |
+| `state.json` (`index_etag`, `installed`) | same folder | absent |
 | `index.json` (last fetched index) | same folder | absent |
 | dependencies and `requirements.lock` | `<cache>/community_deps/` (`/data/.cache/…` in Docker and HAOS) | absent; rebuilt from the lock inputs when missing |
 
@@ -422,7 +433,7 @@ class CommunityProvider(DataClassDictMixin):
 ## 4. Sequence of pull requests
 
 Each PR targets `dev`, is `maintenance` until the frontend makes it visible, and changes nothing for a server with the
-switch off (S6 adds one entry to the core settings list).
+switch off.
 
 | # | Goal | Files | Tests | Needs first |
 |---|---|---|---|---|
@@ -433,9 +444,9 @@ switch off (S6 adds one entry to the core settings list).
 | S3 | Provider texts merged at load | `controllers/translations/__init__.py` | `tests/controllers/translations/test_provider_strings.py`: prefix forced; reference values fall back to common; locale file merged before and after the locale is loaded; unload removes | - |
 | S4 | Dependency resolve and sync | `controllers/community_catalog/dependencies.py` | `tests/controllers/community_catalog/test_dependencies.py`, hermetic: wheels built in the test, a module-level `_UV_INDEX_ARGS` patched to `--no-index --find-links`: server package excluded; clash with server names `server`; clash between two providers names the other; no wheel refused; a newer version that does not fit the server is passed over; a URL or option requirement refused; lock kept stable; `touches_imported`; exit code ≠ 1 is unavailable | - |
 | S5 | Controller skeleton and the dev-mode local folder | `controllers/community_catalog/{__init__,controller,constants}.py`, `mass.py`, `__main__.py`, `DEVELOPMENT.md` | `tests/controllers/community_catalog/test_dev_folder.py`: loads as community in dev mode; ignored outside dev mode; not in safe mode; `dev_mode` in server info | M2, S2-S4 |
-| S6 | The two settings, index client, kept copy, list command | `controller.py`, `index.py`, `models.py`, `strings.json`, `constants.py`, `helpers/build_info.py`, `controllers/dashboard/controller.py`, `translations/en.json` | `test_index.py`: line mapping for `0.0.0`, `.dev`, `b`, `rc`, `2.11.3`; ETag 304; 404/timeout/bad schema keep the copy; no request when off and nothing installed; `test_settings.py` | S5 |
+| S6 | The switch, index client, kept copy, list and refresh commands | `controller.py`, `index.py`, `models.py`, `strings.json`, `constants.py`, `helpers/build_info.py`, `controllers/dashboard/controller.py`, `translations/en.json` | `test_index.py`: line mapping for `0.0.0`, `.dev`, `b`, `rc`, `2.11.3`; ETag 304; 404/timeout/bad schema keep the copy; no request when off and nothing installed; `test_settings.py` | S5 |
 | S7 | Install, remove, gate at start, blocked at the daily check | `installer.py`, `gate.py`, `controller.py`, `README.md` | `test_installer.py`: only the folder is taken; symlink refused; hash mismatch leaves the installed version; hash equals a coreutils-computed fixture; crash between renames is repaired. `test_gate.py`: one case per table row. `test_controller.py`: blocked provider unloads, entry stays with reason; hand-copied folder does not load | S1, S6 |
-| S8 | Update, auto-update, switch of unlisted versions, rollback, pending | `controller.py`, `installer.py` | `test_update.py`: live update reloads importers only; imported dependency change sets `pending_version` and applies at start; unverified version that raises `TypeError` rolls back and sets `failed_version`; `LoginFailed` does not; unlisted switches or becomes unavailable | S7 |
+| S8 | Update, the `auto_update` setting, switch of unlisted versions, rollback, pending | `controller.py`, `installer.py` | `test_update.py`: live update reloads importers only; imported dependency change sets `pending_version` and applies at start; unverified version that raises `TypeError` rolls back and sets `failed_version`; `LoginFailed` does not; unlisted switches or becomes unavailable | S7 |
 | S9 | Moved providers and the notice | `constants.py`, `controller.py` | `test_moved.py`: installs with the switch off; list stays limited to installed; notice dismissed once | S8 |
 
 Before the registry exists: everything through S9 is built against fixtures. Tests serve an index JSON and tarballs
@@ -449,13 +460,15 @@ What this step needs from other steps:
   `manifest`/`icon_svg`/`latest`/`versions{commit, folder, content_hash, requirements, released}`/
   `blocked_versions`); blocked
   and withdrawn entries keep their version records; the content hash of 2.3 computed from the GitHub tarball;
-  requirements limited to names with specifiers; the dependency check run as the one uv pass of 2.4 against the
+  requirements limited to names with specifiers; an SVG icon without scripts or references to other files; the
+  dependency check run as the one uv pass of 2.4 against the
   image's installed distributions; a hand-written `nightly.json` with one test provider as early as possible.
 - **Developer workflow (#439)**: the provider sits in a folder named after its domain; the dev container passes its
   parent as `--dev-providers-dir` with `PYTHONDEVMODE=1`; the docs say a provider never writes into its own folder (it
   would change the hash).
 - **Frontend (#438)**: `include_unavailable`, the six commands, the event, `dev_mode`, the confirm dialog on the
-  hidden `enabled` entry.
+  hidden `catalog_enabled` entry (read with `config/core/get_entries`, domain `community_catalog`), and the icon of
+  a listed provider shown as an image from its data URI.
 - **Moving (#440)**: fills `MOVED_PROVIDER_DOMAINS`.
 
 ## 5. Spikes
