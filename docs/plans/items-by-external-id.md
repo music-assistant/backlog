@@ -1,6 +1,6 @@
 # Items by external id, resolved on demand: technical plan
 
-Status: proposal 2026-11-14, open questions below. Owner: Marcel van der Veldt. This document is
+Status: proposal 2026-11-14, design decisions taken (see Decisions). Owner: Marcel van der Veldt. This document is
 the technical companion of the "Items by external id: top tracks and discography that are only
 looked up when opened or played" epic (#452) on the project board. Every claim marked "verified"
 was checked in the referenced code (server `dev` at `4e2c937d6`, `music-assistant-models`
@@ -16,18 +16,29 @@ every one on the user's services, which is being cut back to library-only matchi
 
 This plan adds one generic form for an item known only by an external id, a resolver that turns
 it into a real item when the user opens, adds or plays it, a ListenBrainz-ranked top tracks list
-built on it, lazy resolution in the queue, and finally moves the discography onto the same form.
+built on it, lazy resolution in the queue, and moves the discography onto the same form right
+away.
 No database or model change, no new setting, no background job.
 
 ## Decisions
 
 Taken with the maintainer on 2026-11-14:
 
-- Frontend: one generic `isExternalItem` replaces `isMusicBrainzItem`. The provider value
-  `musicbrainz` is only accepted inside it, for as long as the server still sends it (section 8).
-
-The other choices are still open, see "Open questions". The plan is written with the
-recommended option of each.
+- Form: `external://<type>/<id_type>:<value>` with `provider="external"`. Generic for every id
+  type, no collision with the real `musicbrainz` provider, no models change.
+- The discography switches at once, in the same release as the resolver and the frontend. It
+  does not wait for a mobile app release; `musicbrainz://album/<id>` stays a permanent alias.
+- Top tracks list source: ListenBrainz without a token now (one request per artist, cached 7
+  days, a 401 means "no list"). In parallel we ask MetaBrainz whether the project can get a
+  token, and look into serving the popularity data from our own mirror.
+- List length: 50.
+- Playing the whole list: the tracks are enqueued as they are and each one is resolved when the
+  queue loads it.
+- No name search as a last resort: library, MusicBrainz links and ISRC only. Revisit if users
+  report many misses.
+- An external track carries its album as an `ItemMapping` built from the list answer, at no
+  extra request; the album is resolved by its release id only when it is opened.
+- Frontend: one generic `isExternalItem` replaces `isMusicBrainzItem` (section 8).
 
 ## Requirements
 
@@ -38,7 +49,8 @@ recommended option of each.
 - Any external id type and media type fits the form; MusicBrainz release group (album) and
   recording (track) are implemented first, ISRC and barcode come almost for free.
 - `musicbrainz://album/<release group id>` keeps resolving forever.
-- Released mobile apps keep working throughout.
+- Released mobile apps keep working: opening or playing such an item resolves it on the
+  server, whatever the app shows for it.
 - Every request goes through an existing or new throttler; a 429 is respected.
 
 ## How it works today
@@ -142,11 +154,13 @@ An item known only by an external id is a normal media item with:
   provider domain of that name exists, verified),
 - `item_id = "<ExternalID value>:<id>"`, e.g. `musicbrainz_recordingid:9e2ad5bc-...`,
 - the id also in `external_ids`, `provider_mappings` empty,
-- `is_playable = True` for a track (it resolves when played), `False` for an album until the
-  album queue path learns to resolve lazily (an album is opened, then played).
+- `is_playable = True` for a track (it resolves when played), `False` for an album: a client
+  opens it first. A play request that names such an album by its URI still plays, because a URI
+  is resolved before anything else (`queue_loader.py:1177-1180`, verified).
 
 URI: `external://track/musicbrainz_recordingid:<id>`, `external://album/musicbrainz_releasegroupid:<id>`,
-`external://track/isrc:<isrc>`. `parse_uri` handles it unchanged. No models change: the form is
+`external://album/musicbrainz_albumid:<release id>`, `external://track/isrc:<isrc>`. `parse_uri`
+handles it unchanged. No models change: the form is
 a convention of `provider`/`item_id`. A helper pair in the server
 (`external_item_id(type, value)` / `parse_external_item_id(item_id)`) builds and splits it;
 an unknown or malformed type raises `InvalidProviderID`.
@@ -163,14 +177,18 @@ Order for a track by recording id:
    `get_provider_item` on the first one, with the name/artist check. One service request.
 5. ISRC lookup (`get_track_by_external_id`) on the user's providers with
    `TRACK_BY_EXTERNAL_ID`, stopping at the first hit. At most one request per such provider.
-6. Not found: `MediaNotFoundError` with a translated message. No name search (open question Q5).
+6. Not found: `MediaNotFoundError` with a translated message. No name search.
 
-Album by release group: the existing `resolve_musicbrainz_release_group`. ISRC track: steps 1
+Album by release group: the existing `resolve_musicbrainz_release_group`. Album by release id
+(`musicbrainz_albumid`, what ListenBrainz names as the album of a track): the library item with
+that id, then the release's details on the mirror (one request, cached 30 days), its streaming
+links and its barcode, as a single edition of the release group route. ISRC track: steps 1
 (by ISRC), 5. Barcode album: library by barcode, then `get_album_by_external_id`. A provider
 result is swapped for its library item when there is one (existing behaviour, `base.py:1222-1227`).
 
 Steps 2 and 4 are `_resolve_via_musicbrainz` moved from the Last.fm provider into
-`TracksController` (`resolve_musicbrainz_recording`); Last.fm calls the moved function.
+`TracksController` (`resolve_musicbrainz_recording`); Last.fm calls the moved function. Its
+album branch (`get_release_details` and the release's links) is the release id route.
 
 `get_item` gets a branch for `provider == "external"` that calls `get_item_by_external_id` of
 the media type's controller and raises `MediaNotFoundError` on None. The `musicbrainz` branch
@@ -182,23 +200,24 @@ cached URI that no longer resolves is dropped and the chain runs again.
 
 ## 3. Top tracks from ListenBrainz
 
-A small client (in the MusicBrainz provider package or a new `listenbrainz` helper; open
-question Q3) with its own `ThrottlerManager(rate_limit=1, period=1)`, honouring 429 and
-`X-RateLimit-Reset-In`, caches the parsed and capped list per artist MBID for 7 days. Only the
-first `TOP_TRACKS_LIMIT` (open question Q6, recommended 50) entries are kept after
-de-duplication by normalised title (first, i.e. most played, wins).
+A small client in a helper of its own, so the list source can later move to our mirror or get
+a token without touching its callers, with its own `ThrottlerManager(rate_limit=1, period=1)`,
+honouring 429 and `X-RateLimit-Reset-In`, caches the parsed and capped list per artist MBID for
+7 days. A 401 is treated as "no list". Only the first `TOP_TRACKS_LIMIT = 50` entries are kept
+after de-duplication by normalised title (first, i.e. most played, wins).
 
 `get_library_artist_toptracks` uses it as the metadata fallback for a library artist with an
 MBID, ahead of Last.fm: each entry is matched to a library track by recording id (one DB query
 per entry or one batched `IN` query); the rest become external tracks with name, artists (the
 library artist as `ItemMapping` where the MBID matches), duration, an album `ItemMapping`
-(`release_mbid`/`release_name`, assumption: shown as an external album) and a cover from
-`caa_release_mbid`/`caa_id` as a direct Cover Art Archive URL (no lookup). Last.fm stays for
+(`external://album/musicbrainz_albumid:<release_mbid>`, named `release_name`; built from the
+list answer, no request) and a cover from `caa_release_mbid`/`caa_id` as a direct Cover Art
+Archive URL (no lookup). Last.fm stays for
 artists without an MBID, matching the library only.
 
 ## 4. Playback
 
-Recommended (Q4 option b): external tracks are enqueued as they are. `_resolve_play_media_entry`
+External tracks are enqueued as they are. `_resolve_play_media_entry`
 does not resolve an external track; the load step (`queue_loader.py:345`) resolves it through
 `get_item_by_uri` before `get_stream_details`, replaces `queue_item.media_item` and keeps the
 origin. A failure marks the item unavailable and the queue moves on, as for any unavailable
@@ -214,12 +233,13 @@ which this design already covers).
 | open artist page, top tracks row | 1 ListenBrainz per artist per 7 days | 0 | 0 |
 | open or play one external track, in library | 0 | 0 | 0 |
 | same, not in library | 0 | 1 (cached 30 d) | 1 by link, else at most 1 per provider with ISRC lookup |
-| play the whole list of 25 (option b) | 0 | per track when loaded | per track when loaded, only tracks reached |
-| play the whole list of 25 (option a, resolve up front) | 0 | up to 25 | up to 25 to 25 x providers, in one action |
+| open the album of an external track | 0 | 1 release lookup (cached 30 d) | 1 by link, else the barcode lookup |
+| play the whole list of 50 | 0 | per track when loaded | per track when loaded, only tracks reached |
 | open a discography album | unchanged: 1 browse + up to 3 release lookups on the mirror; 1 service request per edition link, barcode fan-out only when no link works |
 
-Option a sits against the usage policy (a request per track of a list for one action, even if
-capped); option b does not: it is the same cost as the user pressing play on each track.
+Resolving the whole list when it is played was rejected: a request per track of a list for one
+action is what the usage policy rules out. Resolving on load costs the same as the user pressing
+play on each track.
 
 ## 6. Existing `musicbrainz` items and stored references
 
@@ -233,12 +253,14 @@ permanent alias; no migration.
 ## 7. API compatibility
 
 - No new command, no new parameter, no model field. `get_by_external_id` gets better answers.
-  Per `constants.py:65-73` no `API_SCHEMA_VERSION` bump is needed for steps 1 to 4.
-- The discography switch (step 6) changes what `provider` holds for those albums: by the
-  constant's own rule no bump, but the released mobile app keys on `"musicbrainz"` and would
-  show these albums as playable and fail. Step 6 waits for a mobile app release that understands
-  `external` (Q2). A bump would not help: the app does not gate on the schema version for this.
-- External tracks in top tracks reach the mobile app from step 3 on. The app would show them as
+  Per `constants.py:65-73` no `API_SCHEMA_VERSION` bump is needed for any step.
+- The discography switch changes what `provider` holds for those albums: by the constant's own
+  rule no bump. The released mobile app keys on `"musicbrainz"`, so until it is updated it shows
+  these albums as ordinary, playable albums. Playing one sends its URI, which the server resolves
+  at that moment (one album, one explicit action), and opening one goes through `get`, which
+  step 1 routes to the resolver. Both keep working (assumption about what the app sends, to be
+  confirmed with the mobile app team).
+- External tracks in top tracks reach the mobile app once the ListenBrainz step lands. The app would show them as
   normal playable tracks (its `isPlayable` override covers albums only, assumption from the code
   search): playing sends the URI, which the server resolves, so it works; opening a track page
   calls `music/tracks/get` with provider `external`, which `MediaControllerBase.get`
@@ -249,13 +271,13 @@ permanent alias; no migration.
 
 ## 8. Frontend
 
-One generic `isExternalItem` replaces `isMusicBrainzItem`. Every call site asks the same thing
-(has this item been found yet) and none of them is about MusicBrainz: `ListviewItem.vue`,
-`EditorialMediaCard.vue`, `ReleaseShelf.vue`, `ItemsListing.vue`, `ItemContextMenu.vue` and
-`helpers/media_item_actions.ts`. Until the server switches the discography (step 6) the helper
-also accepts the provider value `musicbrainz`, because the server still sends it for those
-albums. That one value goes in the same release as step 6: the frontend always ships with its
-server, so it never meets an older one.
+One generic `isExternalItem` (`provider === "external"`) replaces `isMusicBrainzItem`. Every
+call site asks the same thing (has this item been found yet) and none of them is about
+MusicBrainz: `ListviewItem.vue`, `EditorialMediaCard.vue`, `ReleaseShelf.vue`,
+`ItemsListing.vue`, `ItemContextMenu.vue` and `helpers/media_item_actions.ts`. The helper does
+not need to know the `musicbrainz` value: the server switches the discography in the same
+release and the frontend always ships with its server. An old link (`/album/musicbrainz/<id>`)
+still opens, because the server keeps resolving that address.
 
 Whether such an item can be played comes from the server's `is_playable` (false for an album,
 true for a track), not from the helper, so the extra `!isMusicBrainzItem` in the play menu
@@ -283,61 +305,30 @@ readrate pacing and every other usage-policy guard. `MIN_SCHEMA_VERSION` and
 - ListenBrainz client on a recorded response: cap, de-duplication, cache hit, 429 handling,
   401 handled as "no list".
 - Top tracks: library matches replace external entries; order kept.
-- Queue: playing 25 external tracks makes no resolver call up front; load resolves exactly the
+- Album by release id: a library hit makes no request; otherwise one release lookup on the
+  mirror and one service request.
+- Queue: playing 50 external tracks makes no resolver call up front; load resolves exactly the
   loaded item; an unresolvable item is skipped.
 
 ## Pull requests
 
 | # | issue | repo | title | depends on | size |
 |---|---|---|---|---|---|
-| 1 | #453 | server | Resolve items by external id on demand (resolver, `external://`, Last.fm reuse) | - | medium |
+| 1 | #453 | server | Resolve items by external id on demand (resolver incl. release ids, `external://`, Last.fm reuse) | - | medium |
 | 2 | #454 | frontend | Show, open and play external items | 1 | small |
-| 3 | #455 | server | Top tracks from ListenBrainz | 1, 2 released together | medium |
-| 4 | #456 | server | Resolve external tracks when the queue loads them | 1 | small |
-| 5 | #457 | mobile-app | Understand external items | 1 | small (other team) |
-| 6 | #458 | server, frontend | Discography lists external albums; the frontend drops the `musicbrainz` value | 5 released | tiny |
+| 3 | #458 | server | Discography lists external albums | 1, released together with 2 | tiny |
+| 4 | #455 | server | Top tracks from ListenBrainz | 1, 2 | medium |
+| 5 | #456 | server | Resolve external tracks when the queue loads them | 1 | small |
+| 6 | #457 | mobile-app | Understand external items | 1 | small (other team) |
 
-## Open questions
+## Still to find out
 
-**Q1. Form of the external item.**
-a) `external://<type>/<id_type>:<value>` with `provider="external"` (generic, any id type, no
-collision with the real `musicbrainz` provider, no models change). b) Keep a provider per id
-family, `musicbrainz://track/<recording id>` (no client change at all, but MusicBrainz-only and
-keeps the collision). c) A new model field (`unresolved`) plus a), so clients key on a field, not
-a string (models PR, schema bump).
-Recommendation: a).
-
-**Q2. When does the discography switch?**
-a) After a mobile app release that understands `external`; `musicbrainz` accepted forever.
-b) Now, accepting that released apps show discography albums as playable and fail. c) Never;
-only new lists use `external`.
-Recommendation: a).
-
-**Q3. Top tracks list source and access.**
-a) ListenBrainz tokenless, cached 7 days, treat 401 as "no list". b) As a), plus the token of a
-configured ListenBrainz scrobble provider when present (a user token used for a non-user call).
-c) Ask infrastructure to serve or cache ListenBrainz popularity on the mirror domain.
-d) Last.fm only, using its recording ids where present (part of the list has none, so fewer
-tracks; Last.fm needs an API key).
-Recommendation: a) now, c) asked in parallel; d) remains the fallback for artists without MBID.
-
-**Q4. Playing the whole list.**
-a) Resolve all entries at play time (up to 25 resolutions in one action, may exceed the 60 s
-deadline, against the usage policy's spirit). b) Enqueue as they are, resolve each when loaded.
-c) Play only the library tracks of the list.
-Recommendation: b).
-
-**Q5. A name search as last resort for one explicitly opened or played track?**
-a) No: library, links, ISRC only. b) One search on the first provider only, with the existing
-match check.
-Recommendation: a); revisit if users report many misses.
-
-**Q6. List length.** 25 (as Last.fm today), 50, or 100. The response is one request either way;
-the cost is in the cache size only. Recommendation: 50.
-
-**Q7. External albums in the top tracks list's album column.** a) Album `ItemMapping` as an
-external album (opens through the release route; needs a release-to-group step or a release
-route). b) No album link for external tracks. Recommendation: b) first, a) Later.
+- Whether MetaBrainz will give the project a token for the ListenBrainz popularity endpoint, and
+  under which conditions.
+- Whether our own mirror can serve or cache the popularity data, so the list does not depend on
+  a public endpoint.
+- With the mobile app team: what a released app does when it plays or opens an album in the
+  external form (section 7 assumes it sends the URI).
 
 ## Later
 
@@ -345,4 +336,3 @@ route). b) No album link for external tracks. Recommendation: b) first, a) Later
 - External items for other lists: recommendations, charts, imported playlists by ISRC, similar
   tracks from open data.
 - Lazy resolution for an external album in the queue (play an unresolved album directly).
-- Release (not group) ids as external albums.
