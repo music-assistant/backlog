@@ -1,11 +1,11 @@
 # Items by external id, resolved on demand: technical plan
 
-Status: proposal 2026-11-14, design decisions taken (see Decisions). Owner: Marcel van der Veldt. This document is
-the technical companion of the "Items by external id: top tracks and discography that are only
-looked up when opened or played" epic (#452) on the project board. Every claim marked "verified"
-was checked in the referenced code (server `dev` at `4e2c937d6`, `music-assistant-models`
-1.1.238, frontend `main` and mobile-app `main` of 2026-11-14). Claims marked "assumption" were
-not checked.
+Status: proposal 2026-11-14, design decisions taken (see Decisions). Owner: Marcel van der
+Veldt. This document is the technical companion of the "Items by external id: top tracks and
+discography that are only looked up when opened or played" epic (#452) on the project board.
+Every claim marked "verified" was checked in the referenced code (server `dev` at `4e2c937d6`,
+`music-assistant-models` 1.1.238, frontend `main` and mobile-app `main` of 2026-11-14). Claims
+marked "assumption" were not checked.
 
 ## Summary
 
@@ -17,8 +17,7 @@ every one on the user's services, which is being cut back to library-only matchi
 This plan adds one generic form for an item known only by an external id, a resolver that turns
 it into a real item when the user opens, adds or plays it, a ListenBrainz-ranked top tracks list
 built on it, lazy resolution in the queue, and moves the discography onto the same form right
-away.
-No database or model change, no new setting, no background job.
+away. No database or model change, no new setting, no background job.
 
 ## Decisions
 
