@@ -1,8 +1,9 @@
 # Items by external id, resolved on demand: technical plan
 
-Status: being built; design decisions of 2026-11-14 and 2026-11-15 (see Decisions). Owner: Marcel van der
-Veldt. This document is the technical companion of the "Items by external id: top tracks and
-discography that are only looked up when opened or played" epic (#452) on the project board.
+Status: built on 2026-11-15, except the mobile app step (#457); design decisions of 2026-11-14
+and 2026-11-15 (see Decisions). Owner: Marcel van der Veldt. This document is the technical
+companion of the "Items by external id: top tracks and discography that are only looked up
+when opened or played" epic (#452) on the project board.
 Every claim marked "verified" was checked in the referenced code (server `dev` at `4e2c937d6`,
 `music-assistant-models` 1.1.238, frontend `main` and mobile-app `main` of 2026-11-14). Claims
 marked "assumption" were not checked.
@@ -44,8 +45,8 @@ Taken with the maintainer on 2026-11-14:
   functions (section 2).
 - No catalogue of full library rows for items that merely pass by. The cache already answers
   a repeated request, while a row per listed track costs about 5 KB and 18 to 40 statements
-  and widens every background scan. The identity between services, the one real gain, goes
-  into a small table as the last step (section 10).
+  and widens every background scan. The identity between services was to go into a small
+  table as the last step; that table is not built (section 10).
 
 Taken while building, on 2026-11-15:
 
@@ -54,19 +55,33 @@ Taken while building, on 2026-11-15:
   an external id). A user with local files only gets the library tracks in ListenBrainz's
   order: tracks that can never be found would fill the list, and playing them would skip
   until the queue stops.
-- A music provider or MusicBrainz that could not answer (a rate limit, exhausted retries) is
-  reported as such and never as "not available"; nothing is remembered for that outcome.
+- A music provider or MusicBrainz that could not answer is reported as such and never as
+  "not available"; nothing is remembered for that outcome. That covers a rate limit and
+  exhausted retries, and since music-assistant/server#7757 also a provider that is
+  unavailable, a timeout, a broken connection and a server error of MusicBrainz.
 - Clients name the tracks of a multi-item play request by URI alone, so the server keeps the
   form in which it listed an external track (30 days) and the queue enqueues it from that,
   without a lookup. A URI the server never listed is a placeholder until it is loaded.
 - The queue looks an external track up as the user it plays for; a queue without a user only
   uses the music sources shared with everyone.
-- Saving the queue as a playlist is refused while it holds tracks that are not looked up yet.
+- Saving the queue as a playlist looks up the tracks that are not looked up yet: one at a
+  time, inside the background task that fills the playlist, without their album and artist
+  details. A track that cannot be found is left out and reported; a music service that
+  cannot answer ends the save, so a later run saves the whole queue in its order
+  (music-assistant/server#7750; the first version refused the save).
 - Genre playback and autoplay seeds leave external tracks out: both would turn one action
   into a lookup per track.
 - The discography switch is merged right after the frontend release that understands the
   external form is pinned: a frontend without it shows an item without provider mappings as
   unavailable.
+
+Taken after the steps landed, on 2026-11-15:
+
+- No identity table (section 10). Spotify, Tidal, Qobuz, Deezer and Apple Music, the
+  services that carry ISRCs and barcodes, each answer such an id in one request, so the
+  table would save one request per lookup at most. The cache database is no place for it
+  either: the cache controller stores values without knowing what they are. The resolver
+  keeps remembering a lookup in the cache for 7 days.
 
 ## Requirements
 
@@ -235,8 +250,8 @@ as provider domain plus item id, the content of a provider mapping, not as a URI
 account: a streaming catalogue id is the same for every account of a service, so one
 remembered result serves the whole household. The user's visible sources are applied when it
 is read, so a household member never gets another member's account. It is kept in the cache
-for 7 days; a result that no longer resolves is dropped and the chain runs again. The
-identity table of section 10 later takes the cache's place behind the same two functions.
+for 7 days; a result that no longer resolves is dropped and the chain runs again. This is
+the only memory: the identity table of section 10 is not built.
 
 ## 3. Top tracks from ListenBrainz
 
@@ -284,8 +299,8 @@ looks it up at once (it is the item to load).
   again; the queue's existing limit on unplayable items in a row bounds a run of misses. A
   provider that could not answer stops playback with that error and leaves the item
   available.
-- Until it is looked up an external track seeds no autoplay refill, is left out of genre
-  playback, and keeps the queue from being saved as a playlist.
+- Until it is looked up an external track seeds no autoplay refill and is left out of genre
+  playback. Saving the queue as a playlist looks it up (see Decisions).
 
 The queue persists items across restarts; an external track restored from disk is looked up
 on load like any other.
@@ -299,11 +314,16 @@ on load like any other.
 | same, not in library | 0 | 1 (cached 30 d) | 1 by link, else at most 1 per provider with ISRC lookup |
 | open the album of an external track | 0 | 1 release lookup (cached 30 d) | 1 by link, else the barcode lookup |
 | play the whole list of 50 | 0 | per track when loaded | per track when loaded, only tracks reached |
+| save the queue as a playlist | 0 | 1 per track not looked up yet | 1 per such track, plus 1 on the playlist's service when that is another one |
 | open a discography album | unchanged: 1 browse + up to 3 release lookups on the mirror; 1 service request per edition link, barcode fan-out only when no link works |
 
 Resolving the whole list when it is played was rejected: a request per track of a list for one
 action is what the usage policy rules out. Resolving on load costs the same as the user pressing
 play on each track.
+
+Saving the queue as a playlist is the one action for which the maintainer accepted a lookup
+per track (2026-11-15): the tracks are those of the user's own queue, they are looked up one
+at a time through the throttlers, and nothing but the lookup is fetched for them.
 
 ## 6. Existing `musicbrainz` items and stored references
 
@@ -361,25 +381,27 @@ discography listing and its cost, Last.fm for artists without an MBID, the throt
 readrate pacing and every other usage-policy guard. `MIN_SCHEMA_VERSION` and
 `API_SCHEMA_VERSION` are untouched.
 
-## 10. Identity table (last step)
+## 10. Identity table (not built)
 
-A small table that keeps which item on a music service belongs to an external id: external id
-(type, value, media type) to provider domain and item id, with a last-seen date. About 0.2 KB
-per entry (estimate). It holds ids only: no names, no artwork, no library rows, no merging and
-no link tables.
+Planned as the last step: a small table that keeps which item on a music service belongs to
+an external id (type, value and media type, to provider domain and item id, with a last-seen
+date), filled from resolver results, matches between services and the ids on listings that
+were fetched anyway, and read before a MusicBrainz or service lookup.
 
-- Filled without a single extra request, from three sources: resolver results, matches
-  between services (including the playback fallback for a track outside the library) and the
-  ISRC, barcode or MusicBrainz id of items in listings that were fetched anyway. One bulk
-  write per listing page.
-- Read by the resolver before the MusicBrainz links and the ISRC or barcode lookup, and by the
-  match between services before its ISRC lookup or search.
-- Entries are removed by last-seen date. The table can be emptied at any time and is learned
-  again, so it lives in the cache database: `library.db`, its schema version and its backups
-  stay untouched.
+Decided on 2026-11-15, after the other steps had landed: it is not built.
 
-It is built once the resolver is in use and it is clear how often a lookup repeats after the
-7 days of section 2. How long an entry may be kept is decided then.
+- The five services that carry ISRCs and barcodes (Spotify, Tidal, Qobuz, Deezer and Apple
+  Music) each answer such an id in one request. Remembering more saves one request per
+  lookup at most, and filling the table from every listing page would add a database write
+  per page.
+- It has no good home. The cache database belongs to a controller that stores values
+  without knowing what they are, so a typed table does not fit there. A table in
+  `library.db` needs a schema version and a migration, and would put ids of items outside
+  the library into the library database and its backups.
+
+The resolver keeps remembering what an external id resolved to in the cache for 7 days
+(section 2). If usage shows lookups repeating after that, the first step is a longer
+expiration, not a table.
 
 ## Testing
 
@@ -407,11 +429,14 @@ It is built once the resolver is in use and it is clear how often a lookup repea
 | 4 | #455 | server | Top tracks from ListenBrainz | 1, 2 | medium |
 | 5 | #456 | server | Resolve external tracks when the queue loads them | 1 | small |
 | 6 | #457 | mobile-app | Understand external items | 1 | small (other team) |
-| 7 | #460 | server | Remember which item on a service belongs to an external id | 1, in use | small |
+| 7 | #460 | server | Remember which item on a service belongs to an external id (not built, section 10) | - | - |
 
 Pull requests: 1 music-assistant/server#7701, 2 music-assistant/frontend#3185,
 3 music-assistant/server#7703, 4 music-assistant/server#7709, 5 music-assistant/server#7704,
-6 music-assistant/mobile-app#1383 (a draft, offered to the app's maintainers).
+6 music-assistant/mobile-app#1383 (a draft, offered to the app's maintainers). Two
+follow-ups: music-assistant/server#7757 reports a source that could not be reached in more
+cases, and music-assistant/server#7750 lets a queue be saved as a playlist while it holds
+tracks that are not looked up yet.
 
 ## Still to find out
 
