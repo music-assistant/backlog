@@ -55,8 +55,10 @@ Taken while building, on 2026-11-15:
   an external id). A user with local files only gets the library tracks in ListenBrainz's
   order: tracks that can never be found would fill the list, and playing them would skip
   until the queue stops.
-- A music provider or MusicBrainz that could not answer (a rate limit, exhausted retries) is
-  reported as such and never as "not available"; nothing is remembered for that outcome.
+- A music provider or MusicBrainz that could not answer is reported as such and never as
+  "not available"; nothing is remembered for that outcome. That covers a rate limit and
+  exhausted retries, and since music-assistant/server#7757 also a provider that is
+  unavailable, a timeout, a broken connection and a server error of MusicBrainz.
 - Clients name the tracks of a multi-item play request by URI alone, so the server keeps the
   form in which it listed an external track (30 days) and the queue enqueues it from that,
   without a lookup. A URI the server never listed is a placeholder until it is loaded.
@@ -431,9 +433,10 @@ expiration, not a table.
 
 Pull requests: 1 music-assistant/server#7701, 2 music-assistant/frontend#3185,
 3 music-assistant/server#7703, 4 music-assistant/server#7709, 5 music-assistant/server#7704,
-6 music-assistant/mobile-app#1383 (a draft, offered to the app's maintainers). A follow-up,
-music-assistant/server#7750, lets a queue be saved as a playlist while it holds tracks that
-are not looked up yet.
+6 music-assistant/mobile-app#1383 (a draft, offered to the app's maintainers). Two
+follow-ups: music-assistant/server#7757 reports a source that could not be reached in more
+cases, and music-assistant/server#7750 lets a queue be saved as a playlist while it holds
+tracks that are not looked up yet.
 
 ## Still to find out
 
