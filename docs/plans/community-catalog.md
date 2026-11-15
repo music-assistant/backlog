@@ -1,10 +1,10 @@
 # Community catalog: technical plan
 
-Status: proposal 2026-11-13. Owner: Marcel van der Veldt. This document is the technical
-companion of the "Community catalog" epic on the project board. It is written so it can be fed
-to an agent for implementation; every claim marked "verified" was checked in the server code at
-`7d5dd8e34` or in the referenced GitHub data on 2026-11-13. The Catalog page that presents
-built-in and community providers together is covered by
+Status: proposal 2026-11-13, updated 2026-11-14. Owner: Marcel van der Veldt. This document is
+the technical companion of the "Community catalog" epic on the project board. It is written so
+it can be fed to an agent for implementation; every claim marked "verified" was checked in the
+server code at `7d5dd8e34` or in the referenced GitHub data on 2026-11-13. The Marketplace page that
+presents built-in and community providers together is covered by
 [provider-catalog.md](provider-catalog.md).
 
 Terminology: "provider" is the code and contributor term. A **built-in** provider ships in the
@@ -37,7 +37,7 @@ Built-in providers stay as they are. The server repository stays open to new pro
 requirements written down: real demand, documentation, the code standards and a maintainer who
 keeps following up.
 
-## Decisions taken with the maintainer (2026-11-13)
+## Decisions taken with the maintainer (2026-11-13/14)
 
 - **Two places.** Everything in the server repository is built-in, whether the team or a
   community developer maintains it. The community catalog is fully community-driven: own
@@ -60,8 +60,13 @@ keeps following up.
   supported server line and writes one index per server line.
 - **The server's dependencies always win.** A version whose requirements clash with the server's
   is rejected by the registry.
-- **Hidden until switched on.** Updates are installed by the admin, with one switch to update
-  the whole community catalog automatically.
+- **One Marketplace, community shown on request.** The Marketplace has a switch to also show the
+  community catalog. Switching it on asks for an explicit confirmation with the own-risk text.
+  Updates are installed by the admin, with one switch to update the whole community catalog
+  automatically.
+- **The Marketplace is for discovery, the settings pages per type for managing** (2026-11-14). The
+  Marketplace also shows what is installed, what has an update and what was updated recently. See
+  [provider-catalog.md](provider-catalog.md).
 - **A provider that moves out of the server takes its users along.** A server that already uses
   it fetches it from the registry after the upgrade.
 - **Built-in or community follows from where a provider loads from.** A manifest cannot claim
@@ -69,6 +74,9 @@ keeps following up.
 - **The server repository stays inviting.** No "community catalog by default". The requirements
   for a built-in provider are explained in the READMEs, the developer docs and an automatic
   comment on every new-provider pull request.
+- **A built-in provider without a maintainer can be moved by the team,** also when nobody takes
+  it over. Those are parked together in one repository in the Music Assistant organisation.
+- **The server part ships as soon as it is ready.**
 - **No pilot.** The first providers to move are those whose maintainer already develops and
   releases them from own repositories; the new-provider pull requests that are open today are
   the first admissions.
@@ -83,8 +91,8 @@ keeps following up.
 
 - A server makes no request to the registry while the community catalog is off and no community
   provider is installed.
-- Switching the community catalog off hides it and stops new installs. Installed community
-  providers keep working until the admin removes them.
+- The community catalog can only be switched off while nothing the admin installed from it is
+  still installed. A provider the server installed by itself because it moved does not count.
 - A server installs a community provider only when the index for its own server line lists that
   exact version, and only after the downloaded files match the content hash in the index.
 - A blocked provider or version is not loaded. Its settings and library items are kept.
@@ -167,7 +175,8 @@ providers/<domain>/versions/<version>.json  generated per release
 index/<server line>.json                    generated, what servers read
 ```
 
-- `provider.json`: `domain`, `repository` (`owner/name`), the folder inside it, `maintainers`
+- `provider.json`: `domain`, `repository` (`owner/name`), the folder inside it and, for a
+  repository that holds several providers, the tag prefix of its releases, `maintainers`
   (GitHub handles), `status` (`listed`, `withdrawn` or `blocked`, with a reason and a link) and
   the admission record (who decided, when, which pull request).
 - `versions/<version>.json`: the release tag, the full commit SHA, a sha256 over the provider
@@ -175,10 +184,10 @@ index/<server line>.json                    generated, what servers read
   per server line.
 - `index/<server line>.json` (`index/2.10.json` for a stable line, `index/beta.json`,
   `index/nightly.json`): for every listed provider the manifest data the app shows (name,
-  description, type, icon, maintainers, documentation, support URL), the newest version that
-  passed for this server line, the last five versions that passed, and per version the
-  repository, commit, content hash and requirements. It also carries the blocked and withdrawn
-  entries.
+  description, type, icon, maintainers, documentation, support URL), the date it entered the
+  catalog, the newest version that passed for this server line, the last five versions that
+  passed, and per version the repository, commit, content hash, requirements and release date.
+  It also carries the blocked and withdrawn entries.
 - The index files are published as static files behind a CDN on a project domain. A server
   reads one file, once a day, with an ETag and a random offset. No server calls the GitHub API.
 - Supported server lines are the current stable line, the beta and the nightly. When a new
@@ -191,7 +200,8 @@ A workflow in the registry runs every night and on request, in separate jobs tha
 files.
 
 **Fetch**, with the registry's own token: read the releases of every listed repository in
-batches and download each new one at its commit. GitHub pre-releases are ignored; a version
+batches and download each new one at its commit. When a provider has several new releases
+since the last run, only the newest is handled. GitHub pre-releases are ignored; a version
 meant for the nightly only is a normal release.
 
 **Check**, without any secret, because it executes code from the provider:
@@ -256,17 +266,22 @@ Declined at admission, and blocked when found later:
 - a provider whose only job is to load other providers or third-party source lists.
 
 Allowed, at the user's own risk: a small audience, an unofficial API used with the user's own
-account, reading a service's web pages, and code that would not pass review for the server.
+account, reading a service's web pages, free public content in the quality the service offers
+without a subscription, and code that would not pass review for the server.
 
 The rules get their own page next to the usage policy, with how to report a provider and what
 happens to a blocked one.
 
 ### 6. Server: installing and loading
 
-- **Switch.** An admin setting "Community catalog", off by default, with the own-risk text. A
-  second setting updates everything in it automatically, off by default. Switching the first
-  one off hides the community catalog and stops new installs; installed community providers
-  keep working until the admin removes them.
+- **Switch.** The Marketplace is always there for everyone; what an admin switches on is the
+  community catalog. It is off by default, admin only, and switching it on asks for an explicit
+  confirmation with the own-risk text. A banner on the Marketplace page lets an admin discover it
+  (switch on, or do not show again); the lasting control is in the page's top right menu, with
+  the other options of the community catalog. A second setting updates everything in it
+  automatically, off by default. Switching the community catalog off is refused while
+  something the admin installed from it is still installed; a provider the server installed by
+  itself because it moved does not count.
 - **Index.** While the switch is on or a community provider is installed, the server fetches
   the index of its server line at start and once a day, and keeps the last copy. It picks the
   file from its own version: the nightly, the beta, or the stable minor line.
@@ -305,14 +320,19 @@ happens to a blocked one.
 
 ### 7. Frontend
 
-- The switch with its text, in the settings.
-- With the switch on, community providers appear where providers are added, with the Community
-  badge, the maintainer, a link to the provider's own documentation and "Get help" pointing at
-  the maintainer's support URL or repository.
-- Installed community providers show their version, an update action and a remove action.
+- The switch on the Marketplace page ([provider-catalog.md](provider-catalog.md), section 2), with
+  its confirmation.
+- With the switch on, community providers appear in the Marketplace, with the Community badge, the
+  maintainer, a link to the provider's own documentation and "Get help" pointing at the
+  maintainer's support URL or repository.
+- The Marketplace shows which installed community providers have an update and which community
+  providers are new or were updated recently. Installed community providers show their version
+  and an update action. Where one is removed is an open point in
+  [provider-catalog.md](provider-catalog.md).
 - Notices for a provider that was blocked, could not be loaded on this server version, or moved
   out of the server.
-- The Catalog page later presents the same data ([provider-catalog.md](provider-catalog.md)).
+- The settings pages per type stay the place to manage what is set up; a community provider is
+  managed there like any other.
 
 ### 8. Developer workflow
 
@@ -352,8 +372,12 @@ An author works in an own repository, not in a fork of the server.
 - **Providers without an active maintainer.** The server repository asks for a maintainer who
   follows up. Where a provider has had no active maintainer for a long time and the team does
   the fixes, the team may move it; a year without codeowner activity is the working measure. It
-  is announced first, in the app and to the codeowner, so
-  that someone can take it over. What happens when nobody does is an open point.
+  is announced first, in the app and to the codeowner, so that someone can take it over. When
+  nobody does, it moves anyway, into one repository in the Music Assistant organisation that
+  parks every provider without a maintainer, and it is listed as looking for a maintainer.
+  This is code that shipped with the server before, so hosting it is nothing new. Whoever takes
+  a provider over moves it to an own repository. A parked provider that stops loading on a
+  server line and that nobody repairs leaves the index of that line.
 - Issues about a community provider that arrive in the support repository are pointed to the
   maintainer's support URL.
 
@@ -422,14 +446,13 @@ nothing is added to the manifest in preparation, because there is no use for it 
 **Signing the index.** The index is served over HTTPS from a project domain. A signature can be
 added without changing the format.
 
-## Parked: codeowners merge their own built-in provider updates
+## Parked: codeowners ask for a backport of their own bugfix
 
-Designed as part of the Catalog plan and not started. It is revisited once the community
-catalog is live and the remaining review load on built-in providers is known. The design: a
-`/merge` command for a codeowner on a pull request that touches only that one provider, checked
-against the codeowners on the base branch, with green required checks, a clean dependency
-review, no open review thread and a clean bot review; new providers excluded; a backport box in
-the pull request template that a codeowner may tick for an own bugfix.
+Codeowners merge updates to their own built-in provider themselves: the review bot approves a
+clean pull request that stays inside one provider, and the codeowner merges it with a command
+(`DEVELOPMENT.md` in the server, "Getting your changes merged"). A new provider is still
+approved by a maintainer. What is parked is a backport box in the pull request template that a
+codeowner may tick for an own bugfix; it is picked up when codeowners ask for it.
 
 ## Phasing
 
@@ -437,8 +460,10 @@ the pull request template that a codeowner may tick for an own bugfix.
 2. The rules for the community catalog and for contributing to the server (sections 5 and 10).
 3. The registry: repository, checks on every release, the index (sections 2 and 3).
 4. Admission (section 4).
-5. Server: install, load, update (section 6).
-6. Frontend (section 7).
+5. Server: install, load, update (section 6), as soon as it is ready. The pull request sequence
+   is in [community-catalog-server.md](community-catalog-server.md).
+6. Frontend (section 7), on the Marketplace page, which is built first
+   ([provider-catalog.md](provider-catalog.md), phase 1).
 7. Developer workflow (section 8).
 8. Move the first providers (section 9).
 9. Providers without an active maintainer (section 9).
@@ -465,14 +490,8 @@ Steps 3 to 7 can run side by side. Step 8 needs 3 to 6 in a release.
   ships a first test.
 - **GitHub is the download source.** An outage delays installs and updates. Installed providers
   keep running.
-- **Open: free, ad-supported public content** played outside the service's own player. The red
-  lines do not settle it. The team decides before the first such admission.
-- **Open: a provider nobody takes over.** Leave it built-in and marked unmaintained, park it in
-  a community organisation, or remove it after the announcement.
 - **Open: who decides admissions** besides the core team.
-- **Open: which release carries the server part.** The assumption is the first minor after 2.11.
-- **Open: the name.** "Community catalog" follows the Catalog page.
-- **Open: the cost of the red-line reading** for maintainers who release many times a month.
+- **Open: how fixes to parked providers are merged and released.**
 
 ## Verification
 
@@ -480,8 +499,9 @@ Steps 3 to 7 can run side by side. Step 8 needs 3 to 6 in a release.
   shows no Community badge; one with a person as codeowner shows the maintainer line.
 - With the switch off and no community provider installed, the server makes no request to the
   registry.
-- Switching the community catalog off leaves installed community providers working and
-  updatable, and offers no new installs.
+- Switching the community catalog off is refused while a provider the admin installed is still
+  installed, and works once those are removed. A moved provider the server installed by itself
+  keeps working with the switch off.
 - Installing a version that the index of the server's line does not list is refused. A download
   whose content hash differs is refused and leaves the installed version in place.
 - A provider marked blocked in the index is unloaded at the next daily check and at start, its
