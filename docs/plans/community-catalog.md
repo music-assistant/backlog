@@ -403,14 +403,18 @@ is never installed by itself again. Servers of earlier lines keep their built-in
 provider until it reaches the index; until then the provider's settings entries say why.
 
 **Timing.** Moves land in 2.11, once the community catalog is in the beta. The registry has an
-index for the 2.11 line before 2.11.0. Until 2.11.0 exists that line is checked in the beta image,
-and with the release in `ghcr.io/music-assistant/server:2.11`.
+index for the 2.11 line before 2.11.0: the line is added to `server_lines.json` during the beta
+with the beta image as its image, because `ghcr.io/music-assistant/server:2.11` only exists from
+2.11.0, and its image is switched to that one with the release.
 
 **Before the first folder is removed:**
 
 1. The registry has an index for the stable line (`server_lines.json` lists `2.11`).
-2. The server's CI refuses a change that removes a provider folder until the indexes of the lines
-   the change reaches (nightly, beta and the coming stable line) list the provider.
+2. The server's CI refuses a change that removes a provider folder or adds a domain to
+   `MOVED_PROVIDER_DOMAINS` until the indexes of the lines the change reaches (nightly, beta and
+   the line of the newest beta) offer the provider with a version that passed. It also refuses a
+   moved domain that still has a folder, and a removed provider the registry lists as moving that
+   is not in the list.
 3. The registry checks that every requirement also has a wheel for arm64; the checks run on
    amd64.
 
@@ -428,9 +432,10 @@ and with the release in `ghcr.io/music-assistant/server:2.11`.
 6. The page on music-assistant.io points to the maintainer's documentation.
 7. The maintainer stops syncing the provider into the server.
 
-While the server still ships a provider, the checks of its releases prove less: the server's own
-copy is imported first, and a requirement pinned differently from the server's clashes. A release
-keeps the server's pins until the move, and the nightly after the move is the first real check.
+While the server still ships a provider, the load check of the registry imports the release's
+code ahead of the server's own copy, and fails a release whose import still ends up at the server's
+copy. Its requirements still resolve against the server's packages, which hold the pins of the
+server's copy, so a release keeps those pins until the move.
 
 **The order.** The first to move are the providers whose maintainer already develops and releases
 them from own repositories, in agreement with that maintainer. One provider goes first; the others
@@ -465,11 +470,11 @@ on a server line and that nobody repairs leaves the index of that line. The cand
 Issues about a community provider that arrive in the support repository are pointed to the
 maintainer's support URL.
 
-**Open.** The registry asks that the last part of a provider's `folder` is its domain, while the
-first nine keep their code in `provider/`; nothing on the install path relies on that name (the
-server and the registry's checks unpack into a folder named after the domain), so the rule can be
-relaxed in the registry, leaving only the local development folder, the test fixture and the Dev
-app tied to a folder named after the domain.
+**The provider folder keeps any name.** The first nine keep their code in `provider/`. A server
+installs the folder under the domain, and the registry takes the domain from `provider.json` and
+the manifest, so `folder` in the registry is any path in the repository. Only a local development
+folder, the test fixture and the Dev app import a folder by its name, so they need one named after
+the domain.
 
 ### 10. Contributing to the server
 
