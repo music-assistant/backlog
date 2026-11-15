@@ -10,8 +10,9 @@ existing aiohttp webserver with no new dependencies. Home Assistant finds it thr
 discovery that ESPHome's Device Builder already uses: one card, one click, no token. Other MCP
 clients (Claude, ChatGPT, Codex, Cursor, Claude Code) connect to the same endpoint with a Music
 Assistant token, and in a second phase through OAuth with PKCE so nothing has to be copied by hand.
-The community `fastmcp_server` plugin stays as an extended alternative, renamed "MCP Server
-(Community)".
+The community `fastmcp_server` plugin stays available as an extended alternative, renamed "MCP
+Server (Community)", and moves to the community catalog ([community-catalog.md](community-catalog.md),
+section 9).
 
 ## Verified facts (2026-11-04)
 

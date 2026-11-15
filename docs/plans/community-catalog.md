@@ -1,6 +1,6 @@
 # Community catalog: technical plan
 
-Status: proposal 2026-11-13, updated 2026-11-14. Owner: Marcel van der Veldt. This document is
+Status: proposal 2026-11-13, updated 2026-11-15. Owner: Marcel van der Veldt. This document is
 the technical companion of the "Community catalog" epic on the project board. It is written so
 it can be fed to an agent for implementation; every claim marked "verified" was checked in the
 server code at `7d5dd8e34` or in the referenced GitHub data on 2026-11-13. The Marketplace page that
@@ -77,9 +77,7 @@ keeps following up.
 - **A built-in provider without a maintainer can be moved by the team,** also when nobody takes
   it over. Those are parked together in one repository in the Music Assistant organisation.
 - **The server part ships as soon as it is ready.**
-- **No pilot.** The first providers to move are those whose maintainer already develops and
-  releases them from own repositories; the new-provider pull requests that are open today are
-  the first admissions.
+- **No pilot.** The new-provider pull requests that are open today are the first admissions.
 - **No new bot.** The team's review bot (Bot-MArley) reads and judges. Code from a provider only
   runs in workflows without secrets.
 - **Plugin UI is declared, not injected.** See section 11.
@@ -96,6 +94,10 @@ keeps following up.
 - **The development image has its own workflow,** not a step of the release workflow: a
   release run stays as long as it is and cannot fail on it. The image is built on the exact
   nightly image and is only published after a build of it started. See section 8.
+- **Moving providers starts with one.** The MCP Server (Community) plugin moves first, in 2.11,
+  and the other eight providers of its maintainer follow once it has moved without trouble. The
+  maintainer gets an issue that explains the new workflow and a ready-made pull request. See
+  section 9.
 - **A menu action declares what is shown, not what is called.** One command of the server runs
   the action on the provider instance the user chose; a provider registers no command of its
   own. Every entry shows which provider it comes from. See section 11.
@@ -386,23 +388,95 @@ An author works in an own repository, not in a fork of the server.
 
 ### 9. Moving providers out of the server
 
-- A provider leaves the server in a normal release: its folder is removed and its domain is
-  added to the list of moved providers. CI refuses that change until the index of that server
-  line lists the provider.
-- Providers that core imports stay. Providers that import each other move together.
-- **First:** the providers whose maintainer already develops and releases them from own
-  repositories, in agreement with that maintainer.
-- **Providers without an active maintainer.** The server repository asks for a maintainer who
-  follows up. Where a provider has had no active maintainer for a long time and the team does
-  the fixes, the team may move it; a year without codeowner activity is the working measure. It
-  is announced first, in the app and to the codeowner, so that someone can take it over. When
-  nobody does, it moves anyway, into one repository in the Music Assistant organisation that
-  parks every provider without a maintainer, and it is listed as looking for a maintainer.
-  This is code that shipped with the server before, so hosting it is nothing new. Whoever takes
-  a provider over moves it to an own repository. A parked provider that stops loading on a
-  server line and that nobody repairs leaves the index of that line.
-- Issues about a community provider that arrive in the support repository are pointed to the
-  maintainer's support URL.
+A provider leaves the server in a normal release: its folder is removed and its domain is added
+to the list of moved providers (`MOVED_PROVIDER_DOMAINS`) in the same change. Providers that core
+imports stay. Providers that import each other move together.
+
+**What keeps working.** A server of the release that drops the provider and that has a
+settings entry of it installs the provider from the index of its own line at start, by itself,
+also with the community catalog disabled. The settings entries and library items stay, because
+the domain stays. The app shows one notice that the provider is now maintained by its community
+maintainer. From then on it is an ordinary installed community provider; one the admin removes
+is never installed by itself again. Servers of earlier lines keep their built-in copy.
+
+**Accepted gaps.** A server without internet access or in safe mode does not get a moved
+provider until it reaches the index; until then the provider's settings entries say why.
+
+**Timing.** Moves land in 2.11, once the community catalog is in the beta. The registry has an
+index for the 2.11 line before 2.11.0: the line is added to `server_lines.json` during the beta
+with the beta image as its image, because `ghcr.io/music-assistant/server:2.11` only exists from
+2.11.0, and its image is switched to that one with the release.
+
+**Before the first folder is removed:**
+
+1. The registry has an index for the stable line (`server_lines.json` lists `2.11`).
+2. The server's CI refuses a change that removes a provider folder or adds a domain to
+   `MOVED_PROVIDER_DOMAINS` until the indexes of the lines the change reaches (nightly, beta and
+   the line of the next release from that branch, as the release workflow names it) offer the
+   provider with a version that passed. It also refuses a
+   moved domain that still has a folder, and a removed provider the registry lists as moving that
+   is not in the list.
+3. The registry checks that every requirement also has a wheel for arm64; the checks run on
+   amd64.
+
+**One move, step by step:**
+
+1. The maintainer's repository is ready: the provider is level with the server's copy, a release
+   passes the reusable `check-provider.yml`, and the translations from Lokalise are in the
+   repository. The maintainer gets an issue that explains the new workflow and a ready-made
+   pull request with the translations and what else is missing.
+2. The domain is added to `moving` in the registry's `reserved_domains.json`.
+3. The maintainer opens the admission pull request and it is admitted.
+4. The indexes of the lines the move reaches list the provider.
+5. One server pull request adds the domain to `MOVED_PROVIDER_DOMAINS` and removes the folder
+   with its tests.
+6. The page on music-assistant.io points to the maintainer's documentation.
+7. The maintainer stops syncing the provider into the server.
+
+While the server still ships a provider, the load check of the registry imports the release's
+code ahead of the server's own copy, and fails a release whose import still ends up at the server's
+copy. Its requirements still resolve against the server's packages, which hold the pins of the
+server's copy, so a release keeps those pins until the move.
+
+**The order.** The first to move are the providers whose maintainer already develops and releases
+them from own repositories, in agreement with that maintainer. One provider goes first; the others
+follow once it has moved without trouble.
+
+| Order | Provider | Domain | Type | Repository |
+|---|---|---|---|---|
+| 1 | MCP Server (Community) | `fastmcp_server` | plugin | `trudenboy/ma-provider-mcp` |
+| 2 | Zvuk Music | `zvuk_music` | music | `trudenboy/ma-provider-zvuk-music` |
+| 2 | KION Music | `kion_music` | music | `trudenboy/ma-provider-kion-music` |
+| 2 | Yandex Disk | `filesystem_yandex_disk` | music | `trudenboy/ma-provider-yandex-disk` |
+| 2 | Yandex Station | `yandex_station` | player | `trudenboy/ma-provider-yandex-station` |
+| 2 | Yandex Smart Home | `yandex_smarthome` | plugin | `trudenboy/ma-provider-yandex-smarthome` |
+| 2 | MSX Bridge | `msx_bridge` | player | `trudenboy/ma-provider-msx-bridge` |
+| 3 | Yandex Music | `yandex_music` | music | `trudenboy/ma-provider-yandex-music` |
+| 3 | Yandex Music Connect (Ynison) | `yandex_ynison` | plugin | `trudenboy/ma-provider-yandex-ynison` |
+
+Yandex Music has the most users and goes last; Ynison depends on it and moves with it.
+
+**Providers without an active maintainer** follow later, separately. The server repository asks
+for a maintainer who follows up. Where a provider has had no active maintainer for a long time
+and the team does the fixes, the team may move it; a year without codeowner activity is the
+working measure. It is announced first, in the app and to the codeowner, so that someone can take
+it over. When nobody does, it moves anyway, into one repository in the Music Assistant
+organisation that parks every provider without a maintainer, and it is listed as looking for a
+maintainer. This is code that shipped with the server before, so hosting it is nothing new.
+Whoever takes a provider over moves it to an own repository. A parked provider that stops loading
+on a server line and that nobody repairs leaves the index of that line. The candidates are
+`jellyfin`, `siriusxm`, `podcastfeed`, `subsonic_scrobble`, `genius_lyrics`, `nugs` and
+`roku_media_assistant`; Plex and Emby have active maintainers and stay.
+
+Issues about a community provider that arrive in the support repository are pointed to the
+maintainer's support URL.
+
+**The provider folder.** The last part of `folder` is the provider's domain or `provider`: one
+predictable layout for a repository with a single provider (`provider/`, as the first nine have
+it) and one for a repository with several (a folder per domain). A server installs the folder
+under the domain, the registry takes the domain from `provider.json`, and the manifest in the
+folder must name that domain. Only a local development folder, the test fixture and the Dev app
+import a folder by its name, so they need one named after the domain.
 
 ### 10. Contributing to the server
 
@@ -466,8 +540,7 @@ Assistant exist outside the project and cannot be prevented; the project does no
 **New providers go to the community catalog by default.** The server repository should stay
 inviting for people who commit to a provider. Stating the requirements is enough to filter.
 
-**A pilot.** The design is built once. The first providers and the open pull requests are the
-first real use.
+**A pilot.** The design is built once. The open pull requests are the first real use.
 
 **Running community providers in a separate process.** Investigated on 2026-11-13.
 Subinterpreters are documented as unsuitable for security, and the models package does not
