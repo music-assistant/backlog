@@ -87,6 +87,19 @@ keeps following up.
 - **Authors work in their own repository** with the server as a development dependency, and can
   test without a local development setup. See section 8.
 
+## Decisions taken while building it (2026-11-15)
+
+- **The community catalog is enabled and disabled,** like everything else in the app, not
+  switched on and off.
+- **The test fixture ships with the server.** A provider's tests get a started server through
+  `pytest_plugins = ["music_assistant.testing"]`. See section 8.
+- **The development image has its own workflow,** not a step of the release workflow: a
+  release run stays as long as it is and cannot fail on it. The image is built on the exact
+  nightly image and is only published after a build of it started. See section 8.
+- **A menu action declares what is shown, not what is called.** One command of the server runs
+  the action on the provider instance the user chose; a provider registers no command of its
+  own. Every entry shows which provider it comes from. See section 11.
+
 ## Requirements
 
 - A server makes no request to the registry while the community catalog is off and no community
@@ -342,7 +355,9 @@ An author works in an own repository, not in a fork of the server.
   development container and the CI workflow.
 - **The server as a development dependency.** The template pins a server release and installs it
   from the tagged source, which gives type checking, completion and the test fixtures. The
-  fixtures an out-of-tree test needs ship inside the server package.
+  fixtures an out-of-tree test needs ship inside the server package: with `pytest_plugins =
+  ["music_assistant.testing"]` a test gets a started server in development mode that loads the
+  providers of the repository, announces nothing on the network and listens locally.
 - **Running it.** In the development container the server starts in development mode with the
   repository as the local provider folder. No local Python, ffmpeg or operating system
   requirement beyond Docker.
@@ -351,8 +366,16 @@ An author works in an own repository, not in a fork of the server.
   pull request.
 - **On Docker.** A new dev image on top of the nightly image
   (`ghcr.io/music-assistant/server:dev`) takes the server, frontend and provider references from
-  the environment. The Dev app and the dev image share one reference parser, kept in the server
-  repository.
+  the environment (`SERVER_REPO`, `FRONTEND_REPO`, `PROVIDER_REPO`). The Dev app and the dev
+  image share one reference parser, kept in the server repository. The image has a workflow of
+  its own: it finds the current nightly image, builds the dev image on exactly that one and
+  starts it with the template's provider, and only then builds and publishes it for both
+  platforms. It runs after every release run, where it does nothing when the nightly did not
+  change, and when the files of the image change.
+- **Open: the Dev app's version.** The release run raises the version of the Dev app before the
+  new dev image exists, so an app that builds on the dev image would be offered an update on
+  the previous image. Either the dev image's workflow raises that version after it published,
+  or the app keeps building on the nightly image and only takes the scripts from the server.
 - **CI.** A reusable workflow, owned by the registry, runs the manifest, dependency and load
   checks of section 3 on the author's pull requests. The red-line reading happens only in the
   registry.
@@ -392,8 +415,20 @@ An author works in an own repository, not in a fork of the server.
 
 ### 11. What a community provider can show in the app
 
-- **Menu actions.** A provider declares actions for a media type (label, icon, the command to
-  call). Every client renders them in the context menu and the play menu.
+- **Menu actions.** A provider declares up to five actions in its manifest: an id, a label,
+  the media types it is offered for, the scope a user needs, an icon name and whether it acts on
+  a player. The app draws them in the menu of a media item, or with the ways to play it for an
+  action on a player, one entry per instance of the provider, and shows under each entry which
+  provider it comes from. Choosing one calls one command of the server
+  (`providers/invoke_menu_action`) with the instance, the action, the item and the player. The
+  server checks that the user may use that instance, holds the scope and may use the player,
+  and then calls the provider, which answers nothing or what a settings action answers: a
+  message, a page to open, or both. A provider registers no command of its own.
+- **What a declared action can say.** The server checks every action when it reads a manifest
+  and leaves a broken one out; the provider still loads. A label is one readable line of at
+  most 40 characters, a translated one of at most 80, and never a text that breaks the line or
+  reorders what is around it. The app shows a label only as text and draws an icon only from a
+  plain icon name.
 - **Forms.** A provider describes a form with the config entry fields the app already draws.
 - **An own page.** A provider can already serve its own HTML on a route of the webserver. The
   app can link to it or show it in a frame.
