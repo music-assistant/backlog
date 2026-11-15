@@ -412,7 +412,8 @@ with the beta image as its image, because `ghcr.io/music-assistant/server:2.11` 
 1. The registry has an index for the stable line (`server_lines.json` lists `2.11`).
 2. The server's CI refuses a change that removes a provider folder or adds a domain to
    `MOVED_PROVIDER_DOMAINS` until the indexes of the lines the change reaches (nightly, beta and
-   the line of the newest beta) offer the provider with a version that passed. It also refuses a
+   the line of the next release from that branch, as the release workflow names it) offer the
+   provider with a version that passed. It also refuses a
    moved domain that still has a folder, and a removed provider the registry lists as moving that
    is not in the list.
 3. The registry checks that every requirement also has a wheel for arm64; the checks run on
@@ -470,11 +471,12 @@ on a server line and that nobody repairs leaves the index of that line. The cand
 Issues about a community provider that arrive in the support repository are pointed to the
 maintainer's support URL.
 
-**The provider folder keeps any name.** The first nine keep their code in `provider/`. A server
-installs the folder under the domain, and the registry takes the domain from `provider.json` and
-the manifest, so `folder` in the registry is any path in the repository. Only a local development
-folder, the test fixture and the Dev app import a folder by its name, so they need one named after
-the domain.
+**The provider folder.** The last part of `folder` is the provider's domain or `provider`: one
+predictable layout for a repository with a single provider (`provider/`, as the first nine have
+it) and one for a repository with several (a folder per domain). A server installs the folder
+under the domain, the registry takes the domain from `provider.json`, and the manifest in the
+folder must name that domain. Only a local development folder, the test fixture and the Dev app
+import a folder by its name, so they need one named after the domain.
 
 ### 10. Contributing to the server
 
