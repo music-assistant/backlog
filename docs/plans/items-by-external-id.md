@@ -410,7 +410,8 @@ It is built once the resolver is in use and it is clear how often a lookup repea
 | 7 | #460 | server | Remember which item on a service belongs to an external id | 1, in use | small |
 
 Pull requests: 1 music-assistant/server#7701, 2 music-assistant/frontend#3185,
-3 music-assistant/server#7703, 4 music-assistant/server#7709, 5 music-assistant/server#7704.
+3 music-assistant/server#7703, 4 music-assistant/server#7709, 5 music-assistant/server#7704,
+6 music-assistant/mobile-app#1383 (a draft, offered to the app's maintainers).
 
 ## Still to find out
 
