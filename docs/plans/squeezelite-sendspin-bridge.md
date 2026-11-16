@@ -1,6 +1,6 @@
 # Squeezebox and squeezelite speakers in Sendspin groups: technical plan
 
-Status: planned 2026-11-15. Work starts once the player split (server#7649) is on `dev`. Owner: Marcel van der Veldt. This document is the technical companion of the "Squeezebox and squeezelite speakers play in sync with Sendspin speakers" epic (#463) on the project board. It is written so it can be fed to an agent for implementation.
+Status: #464–#467 implemented 2026-11-15/16 (see "Changes during implementation"); #469 is a draft (server#7739) that waits for the test on real speakers in #468. Owner: Marcel van der Veldt. This document is the technical companion of the "Squeezebox and squeezelite speakers play in sync with Sendspin speakers" epic (#463) on the project board. It is written so it can be fed to an agent for implementation.
 
 Claims marked "verified" were checked in the referenced code:
 - server `dev` at `6e33e7f3b` and `feature/player-split`;
@@ -31,6 +31,37 @@ Taken with the maintainer on 2026-11-14 and 2026-11-15:
 - Sendspin stays on `CLOCK_MONOTONIC_RAW`. aioslimproto gets a clock the caller passes in, and the bridge passes Sendspin's (see "Clock domain").
 - Target: all grouped playback of these speakers through Sendspin, removing the multi-client group stream (#469). Before that, the bridge has to match today's group quality (#467). Playing on a single speaker stays on the native path.
 - No microphone test. Latency a speaker does not report (HDMI or USB DACs, amplifiers, Bluetooth) is covered by the existing per-player sync delay setting.
+
+## Changes during implementation
+
+What landed differs from the design below where noted here (2026-11-15/16).
+
+**Per sub-issue.**
+- **#464** (aioslimproto#611, 3.5.0; bump server#7714): the clock the caller passes in returns seconds, not microseconds, because the library's whole time API is float seconds; the bridge passes the Sendspin clock divided by 10^6.
+- **#465** (server#7713): the sync loop is a faithful port of the measured spike loop. It uses an NTP-style clock map from `strm t` echoes with min-RTT filtering, a 60 s error regression and feed-forward drift, clamped at 500 ppm.
+  - It has **no deadband and no 80 ms spacing**: the measured loop had neither, and a deadband would widen the hold from ±0.3 to ±0.5 ms.
+  - It makes one start jump when the start is more than 10 ms off (at most 2 s), and restarts the clock map when the player's clock steps.
+  - The bridge starts a player with its own clock map and `unpause_at(jiffies)`, not `start_at()`.
+- **#466** (server#7717): the lead to the player is 1.5 s, and `min_buffer_ms` and `required_lead_time_ms` are both 2000. That puts 2 s of latency on a whole group for live sources (AirPlay: 1 s).
+  - 250 ms of silence opens every bridge stream, because the start instant can only be decided at buffer-ready.
+  - A positive sync delay plays earlier, as on native squeezelite. On the AirPlay bridge the same setting works the other way round.
+- **#467** (server#7737, aioslimproto#613 / 3.6.0): PCM in the speaker's own rate and bit depth, never upsampled.
+  - **No FLAC for now**: PCM is lossless and FLAC only saves bandwidth, so this is decided after #468.
+  - Now-playing goes to the speaker per track, and the learned start offset is kept across restarts.
+
+**Found and fixed on the way** (each its own PR, part of #463):
+- server#7719: the last ~32 ms of a queue were cut on every resampled or encoded Sendspin member.
+- server#7722: bridge order on one device is AirPlay, then squeezelite, then Cast. Squeezelite devices that are themselves a bridge to another protocol get no squeezelite Sendspin bridge.
+- server#7692 (outside contributor): bridged Sendspin outputs got no per-player DSP or channel setting.
+- server#7736: the Sendspin output of a bridged squeezelite speaker follows the squeezelite output's channel setting.
+- aioslimproto#614 (3.6.1) + server#7745: a speaker's own play and pause buttons reach the group.
+- server#7751: a stored sync group prefers a leader that can group with the others.
+- server#7753: a speaker whose AirPlay output is switched off gets its Sendspin output from the next bridge in line. A bridge that takes over an output brings its own controls and default delay.
+- server#7770: a flaky shutdown timer test.
+
+**Decided, still open:**
+- FLAC on Wi-Fi and the start-jump threshold (10 ms; below it a start takes ~25 s to come within 3 ms) wait for the measurements on real speakers in #468.
+- A pause in a Sendspin group is a stop plus a new stream at the position, about 2 s to resume. A real pause needs support in the bridge role and is not planned.
 
 ## Requirements
 
