@@ -1,7 +1,7 @@
 # Items by external id, resolved on demand: technical plan
 
-Status: built on 2026-11-15, except the mobile app step (#457); design decisions of 2026-11-14
-and 2026-11-15 (see Decisions). Owner: Marcel van der Veldt. This document is the technical
+Status: built on 2026-11-15, the mobile app step in music-assistant/mobile-app#1383; design
+decisions of 2026-11-14 and 2026-11-15 (see Decisions). Owner: Marcel van der Veldt. This document is the technical
 companion of the "Items by external id: top tracks and discography that are only looked up
 when opened or played" epic (#452) on the project board.
 Every claim marked "verified" was checked in the referenced code (server `dev` at `4e2c937d6`,
@@ -433,7 +433,7 @@ expiration, not a table.
 
 Pull requests: 1 music-assistant/server#7701, 2 music-assistant/frontend#3185,
 3 music-assistant/server#7703, 4 music-assistant/server#7709, 5 music-assistant/server#7704,
-6 music-assistant/mobile-app#1383 (a draft, offered to the app's maintainers). Two
+6 music-assistant/mobile-app#1383. Two
 follow-ups: music-assistant/server#7757 reports a source that could not be reached in more
 cases, and music-assistant/server#7750 lets a queue be saved as a playlist while it holds
 tracks that are not looked up yet.
