@@ -6,8 +6,8 @@ for implementation.
 
 Claims marked "verified" were checked on server `dev` at `d4f339c4f`, models `main` at `bdb6a67`
 and the current default branches of the clients. Paths are relative to `music_assistant/` in the
-server unless they name another repository. The model of phase 2 is reviewed by the owner of the
-players core before its technical design is fixed; it is marked as such below.
+server unless they name another repository. The owner of the players core reviewed the model
+against the code on 2026-11-17; phase 1 and phase 2 below carry what came out of that.
 
 ## Problem
 
@@ -49,8 +49,7 @@ A set comes to exist in one of two ways:
    a small piece of generic support in the players controller.
 4. A delivered set continues on one existing player: the Apple TV for a home theater set, the
    first speaker for a pair. Its id, Home Assistant entity, queue and settings stay. The players
-   of the other speakers are removed, as Chromecast does today, and return as new players when
-   the set is taken apart.
+   of the other speakers go, and return as new players when the set is taken apart.
 5. Phase 1 is the general support and the delivered sets. Phase 2a composes a stereo pair, 2b
    adds a subwoofer (2.1, 1.1), 2c is multi-channel audio in the core and in composed players,
    possibly as its own epic. Nothing chosen for phase 1, 2a or 2b may rule out 2c.
@@ -61,27 +60,36 @@ A set comes to exist in one of two ways:
 
 ## Phase 1: general support (#485)
 
-**models** (one additive release)
+**models** (released in 1.1.243)
 - `PlayerType.MULTI_CHANNEL = "multi_channel"`.
-- `Player.channel_layout`, optional. Values follow ffmpeg's channel layout names where one exists
-  (`stereo`, `2.1`, `3.0`, `3.1`, `5.0`, `5.1`, `7.1`), plus `1.1` for one speaker with a
-  subwoofer; an unknown value falls back the way the other enums do. Empty for a player that is
-  no set, or whose layout its provider cannot tell.
+- `Player.channel_layout`, optional, with the enum `ChannelLayout`: the number of full-range
+  speakers and of subwoofers of the set in home theater notation (`1.1`, `2.1`, `3.0`, `3.1`,
+  `4.0`, `4.1`, `5.0`, `5.1`, `7.1`), and `stereo` for a set of two speakers. An unknown value
+  falls back the way the other enums do. Empty for a player that is no set, or whose layout its
+  provider cannot tell.
+- A new field on the models `Player` needs its property on the server's `Player` in the same
+  step (`tests/models/test_player_final_values.py` checks every field), so the server change
+  carries the models pin.
 
 **server**
-- `PlayerProtocol` reports the layout; the state derivation publishes it.
-- The type takes the place of `STEREO_PAIR` in the six lists that name it (verified):
-  `helpers/config_entries.py:31` (playback targets), `controllers/players/constants.py:71`
-  (ungroup on power off), `helpers/player.py:75` (icon), `controllers/players/lifecycle.py:372`
-  (no MAC lookup), `controllers/config/players.py:1261` (audio config entries),
-  `providers/sendspin/player.py:191` (line-in targets).
-- A stored or reported `stereo_pair` is read as `multi_channel`, where `Player.reported_type`
-  (`models/player.py:966`) already turns `PROTOCOL` into `PLAYER`. The stored type of a player is
-  rewritten when the reported one differs (`controllers/players/lifecycle.py:935`), so no
-  migration step is needed.
-- Two group volume branches test `type != PLAYER` and so leave the own level of a set that leads
-  a session out of the group volume (`controllers/players/volume.py:419`,
-  `models/player_state.py:1301`). They test for a group player instead.
+- `PlayerProtocol` reports the layout. The player publishes the layout of its own protocol, as it
+  does for the type. It is part of the protocol inputs, the state inputs and the state
+  fingerprint, or a change of the layout alone is never published. While the own protocol is
+  away the layout is empty: it is not stored.
+- The type takes the place of `STEREO_PAIR` in four lists: `helpers/config_entries.py`
+  (playback targets), `controllers/players/constants.py` (ungroup on power off),
+  `helpers/player.py` (icon) and `providers/sendspin/player.py` (line-in targets).
+- Not by type: the MAC lookup at attach (`controllers/players/lifecycle.py`) is skipped for a
+  group player only. A set that rides on the protocol of a real device (an Apple TV, a Sonos
+  primary, a WiiM leader) keeps its MAC and with it the matching of that device's other
+  protocols. A Cast group reports no address, so nothing is looked up for it. The type entry in
+  `controllers/config/players.py` had no effect and is gone.
+- Old values: `Player.reported_type` reads a `stereo_pair` as `multi_channel`, next to the rule
+  that turns `PROTOCOL` into `PLAYER`. The config listing of a player that is not live reads the
+  stored record, so a one-time migration step rewrites a stored `stereo_pair`.
+- A group player has no level of its own; every other leader counts with its own level in the
+  group volume. The two branches that decide it (`controllers/players/volume.py`,
+  `models/player_state.py`) test for the group player.
 - API schema version: the shared model changes shape, so it is raised; take a number that no
   open branch holds.
 - The README and SCENARIOS of the players controller describe the type.
@@ -114,10 +122,16 @@ Measured on an Apple TV 4K (tvOS 27.2) with a HomePod mini (OS 27.2) as its spea
 Design:
 - The provider reads these keys. The protocol of the Apple TV becomes the set: type, layout, the
   name from `gpn`. The HomePods are fed directly, HomePods first, with one volume for them.
-- The protocols of the HomePods are removed with `players.remove_protocol` once the set is seen
-  for certain (the Apple TV and the speaker name the same `psgid`), never because a record is
-  missing. A speaker that advertises itself without the set again is registered again. Their
-  pairing data and per-speaker values live with the set while it exists.
+- A speaker is never registered while its set is seen: the provider filters it where it handles
+  discovery. AirPlay sets up every advertised device it does not hold, so without that filter
+  every flap of a record costs a player.
+- A speaker that was registered before gets `players.remove_protocol` once, on a positive
+  identification of the set (the Apple TV and the speaker name the same `psgid`). That removes
+  its player with its settings, saved queue, group memberships and Home Assistant entity, and
+  the Sendspin bridge that rides on it. Pairing and other setup data the set still needs are
+  copied to the set first.
+- A speaker that stops advertising the set is registered again only after it stayed that way
+  for a while, and comes back as a new player.
 - The Apple TV takes part as a member without sound. Player option on the set: "Sound only
   through the connected speakers". Its default, and what the Apple TV does while it is off, are
   decided with the maintainer after the open measurements below.
@@ -139,15 +153,20 @@ HomePod pair on an Apple TV (`psgsz=3`).
 
 ### Sonos and Sonos S1 (#487)
 
-- Verified: the provider registers only the primary of a set (`providers/sonos/provider.py:233`
-  skips a device without the playback capability; `providers/sonos_s1/provider.py:171` skips an
-  invisible one). aiosonos carries the channel map of the zone's speakers and whether a sub and
-  surrounds are present, which the provider only uses for its sound options.
-- The primary reports `MULTI_CHANNEL` and the layout when its zone has more than one speaker: a
-  pair is `stereo`, a soundbar or amplifier with a sub and surrounds the matching layout. The
-  type follows changes made in the Sonos app.
-- The path that adds a speaker by IP address (`providers/sonos/provider.py:170`) gets the same
-  check as discovery, so a satellite is not registered.
+- Verified: the provider registers only the primary of a set (`providers/sonos/provider.py`
+  skips a device without the playback capability; `providers/sonos_s1/provider.py` skips an
+  invisible one).
+- Sonos: the primary reports `MULTI_CHANNEL` and the layout while its zone has more than one
+  speaker, from what the speaker already reports: `has_subwoofer`, `has_surrounds` and
+  `is_stereo_pair` of aiosonos (0.3.0), the home theater capability of the device and the Amp
+  model. It follows changes made in the Sonos app.
+- Layout: the front counts 1 for a single speaker, 2 for a stereo pair or an Amp, 3 for a
+  soundbar; surrounds add 2; a sub adds ".1". A pair is `stereo`, a soundbar with a sub and
+  surrounds `5.1`, an Amp with surrounds `4.0`. A speaker, soundbar or Amp alone is no set.
+- Sonos S1: the same from what SoCo offers in public, with the layout unknown where that does
+  not decide it.
+- The path that adds a speaker by IP address gets the same check as discovery, so a satellite
+  is not registered.
 
 ### Chromecast (#488)
 
@@ -174,40 +193,57 @@ HomePod pair on an Apple TV (`psgsz=3`).
 
 ## Phase 2: composed sets
 
-The model below is the direction. Its technical design is fixed after the review by the owner of
-the players core, and this section is updated then.
-
 Verified starting point: a `Player` holds at most one protocol per domain and one protocol that
-stands for the device (`controllers/players/protocol_linking.py:203` and `:217`, the identity
-veto in `controllers/players/matching.py`, the merge check in `controllers/players/merging.py`).
-Output selection, `play_media`, the state derivation and the grouping plan all work with one
-protocol per domain. That rule stays.
+stands for the device (`controllers/players/protocol_linking.py`, the identity veto in
+`controllers/players/matching.py`, the merge check in `controllers/players/merging.py`). Output
+selection, `play_media`, the state derivation and the grouping plan all work with one protocol
+per domain. That rule stays.
 
-**Model**
+**Model** (the cut of the players core review)
 - A builtin provider creates the composed player through the existing group player flow
   (`ProviderFeature.CREATE_GROUP_PLAYER`, `players/create_group_player`, the frontend's
-  `AddPlayerGroupDialog.vue`) and registers one composite protocol for it, of type
-  `MULTI_CHANNEL`. Its member table names per speaker a channel.
-- The composite stands in the single place per domain and drives its speakers: it forms the
-  protocol's own sync set of them over the one output they all share, picked the way a group
-  picks it today, and sends volume, mute and power to each. To the rest of the core the composed
-  player is a plain player, so it joins sync groups and universal groups and can lead a session.
-- Generic support in the players controller:
-  - an explicit *absorbed* state for the players of the members: not live, not listed, not a
-    candidate for matching, with their records, settings and queues kept, and back when the set
-    is removed. A disabled player is not this: its protocols attach nowhere and it stays listed;
-  - the protocols of the members belong to the composed player while it exists, with the player
-    they came from remembered, so removing the set is an exact undo;
-  - the executor of a group change expands a composed member into its speakers when it calls the
-    protocol of another leader, and never treats the composite's own speakers as members to move;
-  - `controllers/streams/audio.py::_get_output_channels` takes the channel from the member table.
+  `AddPlayerGroupDialog.vue`) and registers one protocol for it, of type `MULTI_CHANNEL`.
+- Membership is a relation on the record of that protocol: the player ids of the members, under
+  the key that group players use, which a removal and a merge of a player already keep right.
+  The link of a member protocol to its own player stays where it is. Removing the set touches
+  only the set's own protocol, so the members are back as they were.
+- The players of the members are *absorbed*. That is the disabled state with three differences:
+  their protocols stay wanted, so the providers keep them connected; they are hidden from the
+  config listing; enable, merge and unlink refuse. One stored marker on the member's own record
+  says so. They stay candidates for matching, so the other protocols of a member device keep
+  landing on its own player and are there again when the set is removed.
+- One gate at attach, beside the check whether a protocol is wanted and before the player of a
+  protocol is resolved: a protocol of an absorbed player is lent to the set when the relation
+  uses it, and is stored as a link only when it does not.
+- Grouping: the set's protocol declares the domain it groups in, read where the outputs of a
+  player, the grouping snapshot and the "can group with" list are built. The snapshot folds the
+  ids of the speakers into the set, the plan rules work with the set, and the executor expands
+  it into its speakers at the call to the device. The set never reports its speakers as group
+  members. Only the controller's `apply_group_change` calls a protocol's grouping methods; the
+  set's provider goes through the controller, as the sync group does.
+- A foreign protocol is kept off a group player by its type today; for a composed player that
+  guard keys on the virtual role of its own protocol, as the merge check already does.
+- `controllers/streams/audio.py::_get_output_channels` takes the channel from the member table.
 - Members have to be able to sync with each other. Browser and app players are refused.
 - How tight the speakers play together is that of the protocol they share.
 
-**Stored data.** The records of a composed player are new. The link of a member protocol to its
-player moves and is restored on removal: a change to existing records made when the user
-composes, not at an upgrade. The session that builds it puts the migration question to the
-maintainer before it is done.
+**First.** The removal of a group member whose shared output protocol stays registered and reads
+unavailable does nothing today (`controllers/players/grouping_plan.py`); a member of a set takes
+that path, so it is fixed before phase 2.
+
+**Stored data.** New: the record of the composed player and of its protocol with the member
+relation, and the marker on each member's own record. No existing link moves. The session that
+builds it puts the migration question to the maintainer before it is done.
+
+**To decide with the maintainer at the start of phase 2** (the code does not settle these):
+- the queues of the members while they are absorbed;
+- whether the id of a member resolves to the set, for clients and automations that still name it;
+- user filters and allow-lists that name a member;
+- per-member settings and DSP: a player that is not live has no config entries, the DSP of a
+  speaker's stream resolves to the player its protocol is attached to, and the per-protocol
+  output channel setting competes with the member table;
+- a member behind its own power control;
+- whether the layout is stored, so it shows while the device is away.
 
 **2a: stereo pair (#492).** Two members, left and right. No new settings: balance is the existing
 DSP filter, delay the existing per-protocol setting, shown under each member.
@@ -222,7 +258,7 @@ announcement formats cap at two channels (`controllers/streams/audio.py`, `helpe
 and the DSP knows the channels all, front left and front right. Not designed here.
 
 **Kept open for 2c**
-- The layout uses ffmpeg's layout names.
+- The layout is an open list of speaker counts; a new one needs no change of the model.
 - The channel of a member is a channel of that layout: the existing `AudioChannel` enum of the
   models, extended with `LFE` in 2b and the surround channels later. Never a filter string.
 - Every speaker of a set keeps its own output pipeline, as the members of a sync session have
