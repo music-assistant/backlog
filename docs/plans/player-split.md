@@ -157,6 +157,9 @@ stripped on write, so the frontend is untouched.
   *(decided 2026-11-09)* Two predicates, as today: the published `available` also holds for a
   device switched off at its external power control (see Lifecycle), `available_for_playback` does
   not.
+  *(decided 2026-11-16)* That holds only for a player whose power control cuts its power, as the
+  user says in its settings, while the control is off or the player starts up. Behind a power
+  control that is a plain switch a player is available only while a protocol can play.
   *(decided 2026-11-13)* A protocol that rides on another one (a bridge) counts only while that one
   is attached and can play; a bridge alone never makes a player available.
 - Control target per feature: the active output protocol, else native, else any available protocol
@@ -224,8 +227,9 @@ never a second player or a new id.
 
 **Lifecycle.**
 - `register` / `register_or_update` = attach (or re-attach) a protocol. A non-permanent
-  `unregister` = detach: the player stays, turns unavailable (or "available, powered off" under an
-  external power control), keeps its queue. Permanent unregister = remove.
+  `unregister` = detach: the player stays, turns unavailable (or "available, powered off" while a
+  power control that cuts its power is off, see below), keeps its queue. Permanent unregister =
+  remove.
 - Detaching releases the queue's audio and pending next-track work (today's `on_player_remove`
   part from music-assistant/server#7268) without dropping the queue.
 - Plugins that use `PLAYER_ADDED` as "device back" or `get_player() is None` as "device gone"
@@ -246,6 +250,27 @@ never a second player or a new id.
   and play on a player with an external power control (music-assistant/server#7435). Today it
   returns success and does nothing (music-assistant/support#6493). A plugin holding a source for an offline device
   starts it on the became-available transition (music-assistant/support#7017).
+  *(decided 2026-11-16)* Play is no exception: a player whose power control cuts its power is not
+  unavailable while that control is off (next point), and play to an unavailable player is refused.
+- *(decided 2026-11-16)* External power control (a smart plug). Music Assistant does not find out
+  by itself that a device lost its power; the user says so. A player whose power control is an
+  external one gets the setting "Power control cuts the power of this player"
+  (`power_control_cuts_power`, off by default, never for a group player) with a start-up time
+  (`power_on_startup_time`, 30 s by default).
+  - With it on, the player is off while the control is off, and starting up while the start-up
+    time runs after the control comes on. In both it is published as available and idle, and what
+    its protocols report does not count. A play switches the control on, waits the start-up time
+    and then plays through any protocol that reaches the device; when none does, it fails with
+    the hint to raise the start-up time. A group waits for such members, all at once, and starts
+    once. The protocols are told when the power counts as cut and when it is back
+    (`on_power_cut`, `on_power_restored`), so a protocol can drop its connection and connect again.
+  - With it off, the control is a plain switch (an amplifier): the player is available while a
+    protocol reaches its device, and a play or a power on switches the control on and waits a few
+    seconds at most for it to report on.
+
+  Decided after a check on real speakers: every device loses and regains its connection in its
+  own way, so the per-device checks of the earlier automatic detection are gone (#478,
+  music-assistant/server#7799).
 - *(decided 2026-11-10)* Access to a grouped player. With access to a player a user may take it out
   of its group and use it alone: ungroup, power off, Play Media when the player's "play media
   overrides group" setting is on, select source. Anything that plays on, or steers, the group needs
@@ -362,7 +387,8 @@ Defaults for the smaller questions:
 - Last known device info and identifiers are stored lazily on the player's config at point of use,
   no extra provider requests.
 - Providers that can power on an offline device themselves (Sonos Wake-on-LAN) get a protocol hook
-  later; external power controls cover the rest.
+  later; an external power control that the user marks as cutting the power of the player covers
+  the rest (see Lifecycle).
 
 ## Phases (PRs into `feature/player-split`)
 
@@ -613,7 +639,8 @@ DLNA renderers; a device re-flashed to another firmware with the same MAC; a pro
 audio protocols remain; the native protocol drops while audio protocols stay available; a role
 flip of the same protocol id; a disabled-by-default device; a session-only web player; a merge of
 an unused duplicate; a universal player config restored with the same `up…` id; power on of an
-offline device through its external power control; commands to an unavailable player.
+offline device through a power control that cuts its power, and a power control that is a plain
+switch; commands to an unavailable player.
 
 ## Risks
 
