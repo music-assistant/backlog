@@ -51,8 +51,8 @@ A set comes to exist in one of two ways:
    a small piece of generic support in the players controller.
 4. A delivered set continues on one existing player: the Apple TV for a home theater set, the
    first speaker for a pair. Its id, Home Assistant entity, queue and settings stay. The players
-   of the other speakers are set aside while the set exists: gone for every client, with what is
-   stored about them kept, and back as themselves when the set is taken apart.
+   of the other speakers are removed, with their settings, and return as new players when the
+   set is taken apart.
 5. Phase 1 is the general support and the delivered sets. Phase 2a composes a stereo pair, 2b
    adds a subwoofer (2.1, 1.1), 2c is multi-channel audio in the core and in composed players,
    possibly as its own epic. Nothing chosen for phase 1, 2a or 2b may rule out 2c.
@@ -120,41 +120,41 @@ nightly build):
   although the speaker cannot play on its own.
 - `players.remove_protocol` removes a player only when no other protocol record of it is left,
   and nearly every speaker also has an AirPlay record.
-- Removing the whole player does not hold either. A removal lets every provider of that player
-  look again, which replays the announcements the server still holds, and the AirPlay provider
-  set the speaker up again within 20 seconds, from a record the speaker no longer sent. That
-  lasted until the record expired, about an hour and a half later.
+- A removal by the user lets every provider of that player look again, which replays the
+  announcements the server still holds: the AirPlay provider set the speaker up again within 20
+  seconds, from a record the speaker no longer sent. That lasted until the record expired,
+  about an hour and a half later.
 
-So the players controller gets one rule for all brands (music-assistant/server#7886):
+So the players controller gets one rule for all brands: the provider of a set reports its other
+speakers, and the core removes their players.
 
-`await mass.players.set_absorbed_protocols(protocol_id, absorbed_protocol_ids)`
+`await mass.players.remove_absorbed_players(protocol_id, absorbed_protocol_ids)`
 
 - `protocol_id` is the protocol that delivers the set. `absorbed_protocol_ids` holds the
-  provider's own protocol ids of every other speaker of that set: always the full list, empty
-  when the protocol delivers no set. The provider calls it once the protocol is set up and
-  whenever the set changes, and keeps no memory of earlier calls.
-- The provider guarantees that the list comes from what the speakers themselves report, never
-  from a speaker that is silent or from a timeout; that it names only its own protocol ids; and
-  that it registers no protocol of its own for a speaker while its set names it.
-- The core stores one key on the record of such a speaker's player, `absorbed_by`, the id of the
-  set's protocol. No migration: a record without the key is not absorbed. A player counts as
-  absorbed only while the record of that protocol exists.
-- Absorbed: the player leaves the registry and clients get `PLAYER_REMOVED`. Nothing is sent to
-  the speaker, nothing attaches to the player (`wants_protocol` is false for all its protocols,
-  so a stale record of another provider cannot bring it back), it is not restored at a start and
-  the settings do not list it. Everything stored stays.
-- Released, when a later list no longer names it: the player is back under its own id with its
-  settings, and its providers look again. When the record of the set's protocol goes, its
-  speakers are free without a call: their protocols attach when a provider offers them, and
-  they are restored at the next start. A released speaker that is not found is an unavailable
-  player like any other, for the user to remove. Nothing is removed by a timer: that would also
-  delete the player of a speaker that is merely switched off.
-- The step can be undone, so it needs no waiting time or second check.
+  provider's own protocol ids of the other speakers of that set. The provider calls it when the
+  protocol is set up and whenever the set changes. Calling it again is free: a speaker whose
+  player is already gone is skipped.
+- For each id that has a stored record with a player, that player is removed for good, as when
+  the user removes it: its protocols, settings, DSP, saved queue and group memberships. Its
+  providers are not asked to look again, which is what brought the speaker back in the
+  measurement above.
+- Skipped: an id without a record, an id of another provider than the set's protocol, the set's
+  own player, a group, and a player that is being removed already.
+- Nothing is stored and nothing is hidden. A speaker that leaves its set is found by normal
+  discovery and is a new player.
+- It cannot be undone, so the provider must be sure: the set itself names the speaker as one of
+  its speakers at that moment, never a speaker that is silent, a timeout or an incomplete list.
+  It names only its own protocol ids, and it registers no protocol of its own for a speaker
+  while its set names it.
+- Accepted: a protocol of another provider that still finds the speaker gets a new, visible
+  player, which the user removes. Bonding speakers while the server runs is a one-time setup
+  step, so no list of devices to keep out and no waiting time are built for it.
 
 What follows from it:
-- A group or sync session that listed the speaker plays on without it.
-- What a plugin keeps per player stops as for any removal and starts again after a release.
-- Home Assistant drops the device and adds it again under the same id after a release.
+- A speaker that plays its own queue at that moment is stopped, and one that sits in a group
+  leaves it, as on any removal. No power off goes out.
+- What a plugin keeps per player goes as for any removal.
+- Home Assistant drops the device of the speaker.
 
 ## Phase 1: delivered sets
 
@@ -175,12 +175,12 @@ Design:
 - A speaker is never registered while its set is seen: the provider filters it where it handles
   discovery. AirPlay sets up every advertised device it does not hold, so without that filter
   every flap of a record costs a player.
-- The protocol of the set names its speakers in `set_absorbed_protocols`, on a positive
-  identification of the set (the Apple TV and the speaker name the same `psgid`). A speaker that
-  was a player before is set aside with that; its record stays, with its pairing and other
-  setup data.
-- A speaker leaves that list when it advertises without the set, not when its record goes
-  silent.
+- A speaker that was a player before is reported with `remove_absorbed_players`, on a positive
+  identification of the set (the Apple TV and the speaker name the same `psgid`). Pairing and
+  other setup data the set still needs are copied to the set first, because the speaker's
+  record goes with its player.
+- A speaker that advertises without the set again is registered by normal discovery, as a new
+  player.
 - The Apple TV takes part as a member without sound. Player option on the set: "Sound only
   through the connected speakers". Its default, and what the Apple TV does while it is off, are
   decided with the maintainer after the open measurements below.
@@ -196,7 +196,7 @@ HomePod pair on an Apple TV (`psgsz=3`).
 - Known from the tests of music-assistant/server#7174 (HomePod 2018, AudioOS 17.2): both speakers
   carry the same `tsid`, and `gid` is `<tsid>+<0 or 1>+<device id>`. To confirm on a current OS.
 - The same construction keyed on `tsid`: the protocol of the first speaker becomes the pair, and
-  names the other speaker in `set_absorbed_protocols`. Both get the full stereo stream.
+  reports the other speaker with `remove_absorbed_players`. Both get the full stereo stream.
 - The HomePods of a pair that belongs to an Apple TV carry both `psgid` and `tsid`: the Apple TV
   set wins.
 
@@ -217,8 +217,8 @@ HomePod pair on an Apple TV (`psgsz=3`).
 - What the speakers report: a pair has two zone members with the channel maps `LF,LF` and
   `RF,RF`, a soundbar with surrounds `LF,RF`, `LR` and `RR`, a speaker alone one member with an
   empty map. The ids of the zone members are the ids the provider uses as protocol ids.
-- To build: the primary names the other speakers of its zone in `set_absorbed_protocols`, at
-  setup and on every update, from `bonded_player_ids` of aiosonos (0.4.0).
+- To build: the primary reports the other speakers of its zone with `remove_absorbed_players`,
+  at setup and when its zone changes, from `bonded_player_ids` of aiosonos (0.4.0).
 - Sonos S1 is not built. SoCo's public `channel` is never cleared when a pair is taken apart, so
   S1 cannot follow a pair. It stays as it is until someone asks.
 
@@ -230,7 +230,7 @@ HomePod pair on an Apple TV (`psgsz=3`).
 - Checked: a device only says whether a group is a multichannel group (`eureka_info`, read in
   `providers/chromecast/helpers.py`), not which speakers it has or which channel each plays, and
   only left and right pairs are known to exist. The layout stays `stereo`.
-- Later: `set_absorbed_protocols` in place of its own removal of a child that is found later.
+- Later: `remove_absorbed_players` in place of its own removal of a child that is found later.
 
 ### WiiM (#489)
 
@@ -246,7 +246,7 @@ HomePod pair on an Apple TV (`psgsz=3`).
 - Open, asked from the reporter: what an ordinary group reports in `group_channel` on current
   firmware, and what a pair looks like that joins the group of another speaker. `group_type`
   would be the cleaner sign, but the library does not pass it on.
-- To build: the leader names the slaves of its set in `set_absorbed_protocols`.
+- To build: the leader reports the slaves of its set with `remove_absorbed_players`.
 
 ### Raumfeld and other brands (#490)
 
@@ -282,12 +282,13 @@ per domain. That rule stays.
   the key that group players use, which a removal and a merge of a player already keep right.
   The link of a member protocol to its own player stays where it is. Removing the set touches
   only the set's own protocol, so the members are back as they were.
-- The players of the members are *absorbed* by the rule of phase 1 (`set_absorbed_protocols`),
-  with the composed provider as a second caller: gone for every client, hidden from the config
-  listing, one stored marker on the member's own record. One difference: the protocols the set
-  plays through stay wanted, so their providers keep them connected. Enable, merge and unlink
-  refuse. The members stay candidates for matching, so the other protocols of a member device
-  keep landing on its own player and are there again when the set is removed.
+- The players of the members are *absorbed*. That is the disabled state with three differences:
+  their protocols stay wanted, so the providers keep them connected; they are hidden from the
+  config listing; enable, merge and unlink refuse. One stored marker on the member's own record
+  says so. They stay candidates for matching, so the other protocols of a member device keep
+  landing on its own player and are there again when the set is removed. This is not the rule
+  of phase 1: a delivered set removes the players of its speakers, a composed set keeps the
+  players of its members and gives them back.
 - One gate at attach, beside the check whether a protocol is wanted and before the player of a
   protocol is resolved: a protocol of an absorbed player is lent to the set when the relation
   uses it, and is stored as a link only when it does not.
@@ -308,8 +309,8 @@ unavailable does nothing today (`controllers/players/grouping_plan.py`); a membe
 that path, so it is fixed before phase 2.
 
 **Stored data.** New: the record of the composed player and of its protocol with the member
-relation. The marker on a member's own record exists since phase 1. No existing link moves. The
-session that builds it puts the migration question to the maintainer before it is done.
+relation, and the marker on each member's own record. No existing link moves. The session that
+builds it puts the migration question to the maintainer before it is done.
 
 **To decide with the maintainer at the start of phase 2** (the code does not settle these):
 - the queues of the members while they are absorbed;
