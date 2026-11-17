@@ -1,552 +1,559 @@
-# An audio source knows who uses it: technical plan
+# A slot in the name of a queue, and the audio in a queue's scope: technical plan
 
-Status: decided on 2026-11-16; step 1 is built as draft music-assistant/server#7800, steps 2 and
-3 follow (see Decisions and Steps). Owner: Marcel van der Veldt. This document is the technical
-companion of the story "Playback stalls after a queue change on a music service that allows one
-stream at a time" (#481) on the project board.
-Written against server `dev` at `077802313`; every `path:line` below is on that commit. It
-follows from pull request music-assistant/server#7762, a first fix that was closed, and from what
-its review rounds found (see the appendix). A throwaway prototype was used to check the claims
-(see "What was checked").
+Status: decided on 2026-11-17 and being built as five pull requests (see Steps). Owner: Marcel
+van der Veldt. This document is the technical companion of the story "Playback stalls after a
+queue change on a music service that allows one stream at a time" (#481) on the project board.
+
+It follows a first plan of 2026-11-16, "an audio source knows who uses it", whose first step
+landed as music-assistant/server#7800: an audio buffer knows who reads it, and a track that
+needs a service's only stream gets it from a prepared track nobody needs. This plan replaces
+the two steps that were to follow it. Two reviews judged earlier versions of it not sound;
+the slot half was then simplified, and a third review judged this version sound with changes,
+which are worked in. Section 9 lists what changed.
+
+Written against server `dev` at `fd2712c98`; every `path:line` is on that commit.
 
 Paths are relative to `music_assistant/`. The folder is left out for `audio.py`,
-`audio_buffer.py` and `audio_analysis.py` (in `controllers/streams/`) and for
-`stream_feeder.py`, `queue_loader.py` and `smart_shuffle.py` (in `controllers/player_queues/`).
-A bare `controller.py` is the queue controller; the streams controller is always written
-`streams/controller.py`.
+`audio_buffer.py` (in `controllers/streams/`) and for `stream_feeder.py`, `queue_loader.py`,
+`playback_tracker.py` (in `controllers/player_queues/`). A bare `controller.py` is the queue
+controller; the streams controller is written `streams/controller.py`.
 
 ## Summary
 
-**Does it hold up?** Yes, with one precise limit. A source can know its *users* by itself: every
-party that waits for its audio or reads it passes through two places in `audio_buffer.py`, so the
-buffer registers them without any call site keeping a marker. What a source cannot know by itself
-is whether its queue still *plans* to play it. That is read from the queue at the moment of the
-decision, from the position it already keeps, with no new stored state.
+**The slot.** A slot stays what it is today: one open source under the provider's limit, with
+today's numbers. Two things are added. The holder is a fact: the buffer that holds a slot
+knows the queue and the item it was made for. And when a source of a queue gives its slot
+back while that queue still plays, the slot stays reserved for that queue for a few seconds;
+to every other taker it is busy that much longer. No queue is admitted or counted, and no new
+kind of refusal is added.
 
-**The rule.** A source is needed while someone uses it (waits for its audio or reads it), or
-while its queue plays its track now or next. A source that still fills and is not needed is
-stopped: always when its track is on no queue any more, and when its track only moved down the
-queue as soon as its provider has no free slot.
+**The audio.** A queue has a record of the buffers made for its items. A buffer is in scope
+while a stream reads it, or while it is the buffer of the track that plays, the next one, a
+claimed one, or a fully loaded previous one. One function drops what is out of scope at once,
+on every provider, filling or complete. A queue without a session has no scope.
 
-**When it is checked.** One function, three moments: when another track asks the provider for a
-slot and none is free, when the last user of a source leaves, and when the items of a queue
-change.
+**Does it hold up?** The cleanup half came through two reviews with small findings, all
+answered below. The slot half is new in this form and small; the race it is for is measured
+(P8, P10). No code of the design exists.
 
-**What it replaces.** All five inferences of pull request 7762 (open stream requests, the flow
-marker, the pending fade, the buffer identity check, the release at the end of a request). On
-`dev` it adds the user set and deletes little; its value there is three gaps that close without
-special cases (see section 3.6).
+**Accepted on purpose.** On a source that loads ahead the slot is free once the track has
+loaded, so a second speaker can play from a one-stream service at the same time, as today
+(P1a).
 
-**Steps.** Three pull requests. The first one alone ends the incident in all four forms. It only
-acts where a provider has no free slot, or where the last user leaves a source nothing can reach
-any more. The second makes the release prompt at the edit. The third deletes what the rule made
-redundant.
-
-**Choice.** The proposal (c), cut so that its first step has the reach of the full design and a
-blast radius close to that of the narrow variant.
-
-## Decisions
-
-Taken with the maintainer on 2026-11-16:
-
-- The proposal of section 3 is built, in the three steps of section 6, in place of pull request
-  7762. Each step ships on its own and spends a night in the nightly build before the next.
-- A prepared track that only moved down the queue gives way only when its provider has no free
-  slot (open question 1, choice a).
-- A prepared next track keeps its source when a speaker asks for another track by itself (open
-  question 2, choice a).
-- The 15 second wait for a slot stays as it is for now; it is its own small change after step 1
-  (open question 3).
-- Steps 1 and 2 ship apart (open question 4).
-- The new next track may start cold after an edit (open question 5, choice a).
-- A "play next" in flow mode that lands after the flow selected its next track is not part of
-  this work (open question 6).
-
-Step 1 as built differs from the estimate below in two ways. It is 283 production lines rather
-than 150, and four streams (the buffer's processed stream, the item stream, the fading item
-stream when it is cut off, and a mix that is abandoned before it is handed over) now close what
-they read from when they end: a reader only leaves its buffer at once when its stream is closed,
-not when the speaker disconnects.
+**Steps.** Four pull requests and one small one, about 2,000 lines of diff with their tests.
 
 ## What was checked
 
-* The four incident forms on today's `dev`: the incident tests of pull request 7762 were run
-  unchanged against `077802313`. Six fail with `ProviderStreamLimitError` (replace next, play
-  next, remove, move, repeat wrap, and the fade case); 17 pass. Remove and move were "from code
-  reading" in the appendix; they are now confirmed.
-* A prototype of the rule (178 added lines in four files, not kept) against the same file: all
-  incident cases pass, as do the two flow cases of rounds 1 and 2. Four tests fail by design:
-  they simulate "in use" by setting a marker by hand (`requested_item_ids` mocked, an entry put
-  into `_crossfade_pending`) instead of having a reader.
-* Ten probes with real readers for findings 3, 5, 6, 7 and 8, the window "next lands while the
-  preparation fetches details", and the need-time check on its own. All pass. Each part of the
-  prototype was then switched off in turn; the probes that depend on it fail, so none of them is
-  vacuous. With the hook in the queue edit switched off, every incident test still passes.
-* 620 existing tests in 31 stream and queue test files against the prototype: 615 pass. The 5
-  that fail use a bare namespace as a buffer. Before the prototype tolerated stand-ins, at least
-  57 tests in five files failed for the same reason (a mocked provider or buffer without the new
-  member); each of those files builds its stand-ins in one helper.
+A virtualenv was built in the checkout. Two rounds of throwaway probes ran with the rig of
+`tests/controllers/streams/stream_slot_rig.py` (`pytest <file> -p no:randomly --no-cov`; all
+passed; the files are removed): twelve on `2211a9a39`, five on `fd2712c98`. What `dev` does:
 
-Not in the prototype: the "queue has no session" half of the rule, the two extras of 3.7 and the
-deletions of step 3. Where something is stated that was not run, it is marked as an assumption or as
-"from code reading".
+| Probe | Sequence | Measured on `dev` |
+|---|---|---|
+| P1a | two queues, one-stream provider, sources that load ahead | the second is not refused; both streams deliver side by side |
+| P2 | a reader on a buffer, a second request for a position the buffer cannot serve | one slot: the first buffer is cancelled and its reader ends. Two slots, no limit: the buffer stays and the reader reads on |
+| P3 | the preparation waits in the format probe, Replace Next removes the track | the buffer is made after the removal and cleaned by R5 when it is ready. Without R5 and without a limit it keeps filling |
+| P6 | the next track is prepared, repeat one is switched on | the prepared capture keeps filling and keeps the only slot |
+| P7 | queue B asks while queue A's realtime source holds the only slot | refused at once: "already playing on Queue A" |
+| **P8** | **A's realtime source ends; before A's next source opens, B asks** | **B gets the slot. A's preparation fails ("already playing on Queue B"), no source is opened for A's next track, and its speaker's request for it is refused the same way** |
+| P9 | a preview already waits for the slot when A's realtime source ends | the preview gets the slot; A's next track has a buffer and no audio until the preview ends |
+| P10 | A skips: its playing source is stopped; before the new one asks, B asks | B gets the slot; A's start is refused, which on a real start stops A (`controller.py:2668-2685`) |
+| P11 | A's source loads ahead and holds the slot; the preparation of the next track waits for it; Replace Next removes that track; A's source ends | the removal leaves the waiting buffer alone (its user is the preparation's wait); its source then starts, for a track that is gone; R5 cleans it afterwards |
 
-## 1. Users of a source
+P8 is the race the reservation is for: a queue that moves from one track to the next loses its
+service to a queue that asks in that moment. P7 shows it is the only way in for another
+queue: a moment earlier or later it is refused.
 
-A source is an `AudioBuffer` plus its producer task. The producer iterates
-`StreamsAudio.get_media_stream`, which holds the provider's slot for as long as it runs
-(`audio.py:829-837`, started by `audio_buffer.py:359-405`). So "give the slot
-back" always means: the producer ends, by itself or through `AudioBuffer.clear()`
-(`audio_buffer.py:407-444`).
+How long that moment lasts could not be measured without a server: in the rig it is a few
+turns of the event loop. From the code it is the time from the release
+(`audio_buffer.py:434-455`) through `track_fully_buffered` (`stream_feeder.py:179-198`), the
+preparation task, `load_next_queue_item` with its library lookups and stream details
+(`controller.py:1779`), to the new producer asking (`audio.py:908-914`). Stream details are
+normally in hand from the preload; when they have to be fetched it is a provider round trip.
+At a skip it is the same from R11's stop (`queue_loader.py:456-460`) to the start's request
+(`:496-501`).
 
-Today the buffer knows nothing about its users. It has a last-access time
-(`audio_buffer.py:139`), a read position and the cancel callbacks of the analysis reader.
+## 1. The slot
 
-| # | User | Starts needing the source | Stops | How the code knows today | Needs it but does not read |
-|---|---|---|---|---|---|
-| 1 | Start of an item (`_play_index` → `_load_item(is_start=True)`, `queue_loader.py:496-501`) | the buffer is created inside the play action | the item is done or the session ends | `index_in_buffer = index` (`controller.py:3068`), the session stamp on the details (`audio.py:4098-4102`) | from "buffer ready" until the player's request arrives: the play command and the player connecting |
-| 2 | Preparation of the next track (`stream_feeder.py:56-177`; triggered at `audio.py:1932-1948`, `stream_feeder.py:179-198`, `audio.py:2299`, `audio.py:2803`) | `get_audio_buffer(reason="prepare_next")` (`stream_feeder.py:130`) | the next track's reader takes over | while the task runs: its task id and `next_item_id_preparing`. After the task: nothing but the position | the whole time between the end of the task and the first read. **This is the holder of the incident.** |
-| 3 | A speaker's stream request (`streams/controller.py:910-1410`) | its registration (`:1002-1003`) | its `finally` (`:1362-1385`) | `_open_item_streams`, `_ended_item_streams`, `last_served_item_id` | the sweep (`:1013`), stream details, format selection, the wait for a fade (up to 30 s, `audio.py:5012-5052`), the wait for a slot (up to 15 s), the encoder start. A HEAD request never reads |
-| 4 | A direct PCM consumer (`StreamsController.get_stream`, `streams/controller.py:1826-1977`): AirPlay, Sendspin, Snapcast, Squeezelite multi-client, the universal group | the provider iterates the generator | it closes it | for sources: not at all. `_open_item_streams` only holds HTTP requests (`:1003`, `:1684`) | generator created, not yet iterated |
-| 5 | The flow generator (`audio.py:2542-3314`); more than one per session is possible (`audio.py:2606-2612`) | per track: `load_next_queue_item` returns (`:2672`) | the track's last chunk | `index_in_buffer`, raised at the track's *first chunk* (`:2943`). Between selection and first chunk: nothing | selection → first read: tail play-out (`:2803-2820`), the mixer build (`:2851`), the prefetch handover (`:2909`, up to 5 s) |
-| 6 | The flow prefetcher (`audio.py:422-631`) | `ensure_started` (`:456-532`) | `take` hands its stream over (`:534-570`), or `close` | only inside the prefetcher | after it collected its target it holds the open stream without reading |
-| 7 | A crossfade outside flow mode (`audio.py:1991-2540`): the request of track A uses track B | `load_next_queue_item` at A's end (`:2216`) | B's own request has played the rest of the mix | `index_in_buffer = B` right at selection (`:2225`), then `_crossfade_pending` (`:2265-2270`) and `_crossfade_handover` (`:2458-2460`) | selection → first pull of the mix; the handover between the two requests |
-| 8 | Gapless handover: the player holds the next track's URL (`stream_feeder.py:329-410`) | `enqueue_next_media` | the player requests it (then it is user 3), or the queue hands over another one (`:303-327`) | `next_item_id_enqueued` | all of it; the source may not exist yet |
-| 9 | Audio analysis (`audio_analysis.py:396-448`) and the visualizer tap (`providers/milkdrop_visualizer/tap.py:404-417`) | the buffer is created | the buffer is cleared (cancel callback, `audio_buffer.py:426-432`) | cancel callbacks | never keeps a source, by design (`audio_buffer.py:281-283`) |
-| 10 | A transferred queue (`controller.py:1396-1557`) | the target's own start | as user 1 | `item.queue_id`, session stamps | the same `QueueItem` objects go to the target (`:1531-1534`) while the source queue's stop and clear still release their audio in tasks (`:2581`, `:2837`) |
-| 11 | A group | one consumer: the universal group opens one stream for its queue (`providers/universal_group/player.py:325`), a sync group plays the leader's | as user 3, 4 or 5 | as those | members have no source of their own |
-| 12 | Announcements | no source buffer (streams README, "Stream Types") | | | they matter only through the stop and resume of the queue |
-| 13 | A paused queue | its session keeps its buffers | the pause watcher, or `release_paused_stream_slot` (`stream_feeder.py:268-301`) | queue and player state | the whole pause |
-| 14 | Slot takers without a buffer: the format probe (`audio_buffer.py:1012-1066`), the preview stream (`streams/controller.py:1995-2036`), a provider that takes a slot itself (`providers/yandex_ynison/provider.py:866`) | | | the semaphore only | |
+### 1.1 What stays
 
-Two providers read the buffer's identity from inside their own source
-(`providers/bbc_sounds/streaming.py:88-104`, `providers/bookorbit/__init__.py:1044-1045`). They
-depend on "detached" and "cancelled" keeping their meaning; the proposal keeps both.
+A slot is one open source. `max_concurrent_streams` keeps its values and its meaning, the
+number of source streams (`models/music_provider.py:307-318`). It is taken in
+`get_media_stream` for as long as the source is open (`audio.py:908-916`). The waits keep
+their budgets: 5 s for a preparation, 15 s for playback (`streams/constants.py:221`, `:228`).
+The refusal of a start behind a realtime source (`stream_feeder.py:209-236`), the hand-over
+by a paused queue (R13, `:268-301`), a start on a full provider (R11) and a speaker that
+moved on by itself (R12) behave as today.
 
-What the table shows: five kinds of reader (3, 4, 5, 6, 7), and each is known through a different
-marker or through none. All five read through `get_queue_item_stream` (`audio.py:1677`) and end
-in `AudioBuffer.get_raw_stream` (`audio_buffer.py:244-275`).
+### 1.2 The holder is a fact
 
-## 2. Release paths today
+Today the provider lists the buffers that hold its slots (`stream_slot_holders`,
+`models/music_provider.py:325-328`), and a buffer does not know whose it is. Step 1 lets a
+buffer carry the queue id and the queue item it was made for, set when `get_buffer` reports
+it to the queue (2.1). Then "who holds a slot" is read, not inferred:
 
-| # | Where | Trigger | What it trusts |
-|---|---|---|---|
-| R1 | the producer ends (`audio.py:835`) | the source is done or fails | nothing |
-| R2 | `get_buffer`, existing buffer not valid (`audio_buffer.py:484-507`) | a seek the buffer cannot serve, an error | `is_valid`, "provider has no free slot", or "last access more than 30 s ago". Otherwise the old buffer is left for "an active consumer" and the inactivity timeout |
-| R3 | `_clear_failed_buffer` (`audio_buffer.py:591-602`) | the buffer does not become ready, or its producer failed | the producer error |
-| R4 | `_monitor_inactivity` (`audio_buffer.py:803-826`) | 300 s without access | `_last_access_time`, which `is_valid()` also resets (`:225`) |
-| R5 | `_do_prepare`, after the buffer is ready (`stream_feeder.py:140-152`) | the prepared item left the queue, or the session ended, *while the task ran* | `get_item`, `session_id` |
-| R6 | `_do_prepare`, cancelled (`stream_feeder.py:155-165`) | another preparation replaces it, or a stop cancels it, *while the task ran* | the cancellation |
-| R7 | `_cleanup_stale_queue_buffers` (`stream_feeder.py:466-507`) | a track's first chunk went out | list position: everything at `index - 2` and before |
-| R8 | `_cleanup_queue_audio_data` (`stream_feeder.py:509-556`) | stop and failed start (`controller.py:2581`), clear (`:2837`), end of queue (`:989`), replace (`queue_loader.py:209`, `:1422`) | the queue's item list at that moment, the session stamp |
-| R9 | `_release_queue_audio` (`controller.py:2602-2613`) | the player is detached or removed | the item list |
-| R10 | dynamic rebuild, discarded tail (`queue_loader.py:1438-1443`) | an enqueue on a dynamic queue | `committed_index`, `requested_item_ids` (`:1394-1401`) |
-| R11 | `_abort_superseded_source_buffers` (`queue_loader.py:1532-1568`) | the start of an item | list position (`index + 1`, not `get_next_item`), "still filling", "provider has a limit", for the successor "no free slot" |
-| R12 | `release_failed_item_source` → `_abort_source_buffer` (`controller.py:1876-1890`, `queue_loader.py:1570-1611`) | a request ended and the player asked for a newer item (`streams/controller.py:1375-1385`); the sweep at every GET (`:1013`, `:2653-2687`); a speaker reports a failed item (`providers/sonos/player.py:910`) | the request history, and `get_item`: an item that left the queue is not found |
-| R13 | `release_paused_stream_slot` (`stream_feeder.py:268-301`) | another queue needs the slot | `_held_stream_slots`, which infers "holds a slot" from "still filling and ready" (`stream_feeder.py:630-639`) |
-| R14 | fade data: `clear_crossfade_handover` (`audio.py:3462-3474`), a claim from another session (`audio.py:5001-5009`), a stale handover at the next publish (`audio.py:2441-2443`) | stop, clear, a new start (`controller.py:3095`) | the queue id, the session id |
+```python
+for buffer in provider.stream_slot_holders:   # holds a slot right now
+    buffer.queue_id, buffer.queue_item        # for this queue and this track
+```
 
-Not on the list: `update_items` (`controller.py:2063-2082`). It swaps the list and releases
-nothing. R5 and R6 only work while the preparation task still runs; once the buffer is ready the
-task is over and the capture goes on with no path that reaches it. That is the incident. Its
-callers are `load` (`:2061`), move (`:885`, `:919`), delete (`:945`), transfer (`:1534`), the
-skip of unplayable items (`:1829`), restore (`:2154`), clear (`:2838`), Smart Fades ordering
-(`smart_shuffle.py:200`), and two plugins (`providers/party/__init__.py:774`, `:790`,
-`providers/ai_radio/queue_dj.py:455`, `:557`, `:588`, `:639`).
+The queue's own record of its buffers (2.1) is not enough for this: it would have to be
+searched in every queue.
 
-Every path decides "is it still in use" from position, session or request history. None asks the
-source.
+Takers without a buffer: the format probe takes its seat in the name of its item's queue
+(`audio_buffer.py:1143-1149`); a preview (`streams/controller.py:2095`) and the Ynison plugin
+(`providers/yandex_ynison/provider.py:866`) have no queue.
 
-## 3. The proposal
+### 1.3 The reservation
 
-### 3.1 What is registered, and by whom
+`acquire_stream_slot` gets the queue it is taken for (`models/music_provider.py:330-361`).
 
-**On the buffer: its users.** A user is a small object with a name. `AudioBuffer.users` lists
-them.
+* **Made** when a source of queue Q that delivers at playback pace (`AudioBuffer.is_realtime`,
+  `audio_buffer.py:157`) gives its slot back, Q still has a session, and Q has something to
+  go on with on that provider: one of its playing, next or claimed items, other than the item
+  whose source just delivered everything, has stream details from that provider or none yet.
+  One per queue and provider. So none after the last track of a queue, none when the next
+  track is from elsewhere, and none on a source that loads ahead.
+* **Lasts** `STREAM_SLOT_RESERVATION` seconds, then lapses by itself.
+* **Used** by Q's next request for a slot of that provider: it takes the slot at once and the
+  reservation is gone.
+* **For everyone else** the slot counts as taken: a taker that is not Q waits while the open
+  sources plus the reservations of other queues reach the limit.
+* **Ends early** when Q's session ends (`_end_session`, `controller.py:2655-2666`, only when
+  it really cleared the session): a stop, the pause timeout (`:1124`), a failed start, a
+  paused queue that hands over, the stop of a transfer (`:1500`). A release that comes after
+  the session ended makes none. A player that is detached or removed: nothing to do, it lapses.
 
-* The buffer registers two kinds by itself:
-  * whoever waits in `get_buffer` for its first audio (`audio_buffer.py:517-520`, `:540-541`);
-  * every open read stream: `get_raw_stream` registers on entry and removes itself in a
-    `finally` (`audio_buffer.py:244-275`). A stream that is open and not reading (a prefetch that
-    has its target, the parked rest of a fade) is still a user.
-* `get_queue_item_stream` holds one user for its whole life, attached at the moment the buffer is
-  taken (passed into `get_audio_buffer`, so it also moves along when a source at its limit is
-  replaced by another one, `audio.py:4117-4156`). This closes the gap between "has the buffer"
-  and "first read" for all five kinds of reader at once.
-* One consumer registers itself: the flow generator holds a user of its own on the track it
-  selected, from `load_next_queue_item` returning (`audio.py:2672`) until it selects the next one
-  or ends (released next to `incoming_prefetcher.close()`, `audio.py:3277`).
-* Analysis and the visualizer tap stay what they are: readers that never keep a source.
+**How it is built.** The semaphore cannot do this: a taker that is already in line gets a slot
+the moment it is returned (P9). So the limit becomes a counter with a condition in the same
+place: same number, same waits, same errors, and the one extra clause above in what a waiter
+waits for. Nothing outside `MusicProvider` touches the semaphore object today.
+`has_available_stream_slot` keeps its meaning, "fewer sources are open than the limit", so
+everything a queue decides for itself from it (R2, R11, the skip of a preparation at
+`stream_feeder.py:558-583`) is as today.
 
-**On the provider: the sources that hold its slots.** `acquire_stream_slot` takes the holder,
-adds it after the acquire and removes it in the same `finally` that returns the slot
-(`models/music_provider.py:322-345`). It is exact where R13 infers.
+**What another taker sees.** No new kind of error. Its request waits inside its own budget and
+gets the slot when the reservation lapses or after Q's next source ended. If Q's next source
+takes the slot meanwhile, the request waits its budget out and ends with today's limit error.
 
-**On the queue: nothing.** The queue answers one question from what it already keeps:
-`plays_now_or_next(item)` is true when the queue has a session and the item is its current item,
-the item its player holds (`index_in_buffer`), or the item that follows either of those according
-to `get_next_item` (so repeat, unavailable items and a sleep timer are honoured).
+**A taker that already waits when the source ends**, a preview for one. Today it gets the
+slot that moment, ahead of the queue's next track (P9). With a reservation the queue's next
+track goes first. A preview has 5 s in total (`streams/controller.py:2095`,
+`streams/constants.py:221`), so it then ends in the limit error where it slipped in today.
+That is a change, and the point of the reservation. Where no reservation is made (the last
+track, a next track from elsewhere) the waiter gets the slot as today. A reservation that is
+made and then not used, because the next track failed to load, costs a waiter up to its
+length, which can be all the budget it had left.
 
-### 3.2 In use, needed, and the rule
+**How long.** Decided: it starts at 5 s and is corrected from what the lab measures. It has to
+be longer than the moment of P8 and shorter than another queue's playback budget of 15 s.
 
-* **In use**: the source has at least one user.
-* **Needed**: in use, or it is still the buffer of its item and `plays_now_or_next(item)` is true.
-* **The rule**: a source that still fills and is not needed is stopped
-  * always, when its item is on no queue, its queue has no session, or another buffer took its
-    place on the item;
-  * otherwise (its item waits further down the queue) only when its provider has no free slot.
+### 1.4 Inside one queue the track it needs wins
 
-"Stopped" is `AudioBuffer.clear()`. The buffer stays attached and cancelled, as
-`_abort_source_buffer` leaves it today (`queue_loader.py:1609-1611`), so the next use replaces it.
+The queue never waits for itself:
 
-The second half keeps what `dev` does for the successor at a start (R11) and what pull request
-7762 intended: a prepared track that only moved down keeps its audio while nobody needs its slot.
+* its own reservation is free to it;
+* before it opens a source, the queue's function drops what is out of its scope and nobody
+  reads (2.4);
+* at a skip or a seek the paths of today stop the source that is in the way, read or not:
+  R11 at a start (`queue_loader.py:1534-1570`), R2 for a replaced buffer on a full provider
+  (`audio_buffer.py:579-586`), R12 for a speaker that moved on.
 
-### 3.3 When the rule is checked
+What is new at a skip is only that the slot R11 frees cannot be taken by another queue before
+the new track asks for it (P10).
 
-One function, `AudioBuffer.release_if_unneeded()`, called from three places:
+### 1.5 What the fact simplifies
 
-1. **A track asks for a slot and the provider has none free.** In `_get_audio_buffer`, before the
-   refusal and the wait (`audio.py:4085-4091`): every holder of that provider's slots is asked,
-   and the stops are awaited. Holders of other queues are asked too.
-2. **The last user of a source leaves.** Inside the buffer.
-3. **The items of a queue change.** In `update_items`, for the buffers of the previous items.
+Only one thing is a plain replacement. `_held_stream_slots` (`stream_feeder.py:614-640`)
+walks the items of every queue for a buffer that "fills and is ready" to guess who holds a
+slot. It becomes: the provider's holders whose audio is ready (today's condition, `:638`),
+each with its queue id, for the queues other than the asking one that have a session. Its
+three users keep their logic:
 
-Moment 1 is the one that hands a slot over. It needs no hook in any queue edit, so it also
-covers the plugins, Smart Fades ordering and whatever edits are added later. Moment 2 serves the
-track that is already waiting when the stale reader ends. Moment 3 makes the release prompt.
-
-### 3.4 How a slot gets to the track that needs it
-
-There is no handover object. The stopped producer returns its slot to the provider's semaphore
-(`models/music_provider.py:345`); the track that needs it either waits in `acquire_stream_slot` already
-and is woken, or acquires right after moment 1 awaited the stop. The limit is never passed: the
-design only ever stops sources of our own, and every open still goes through the semaphore.
-
-### 3.5 Every way a user can end
-
-| End | What happens |
+| User | Change |
 |---|---|
-| The stream plays to its end | the read stream's `finally` removes the user |
-| The speaker disconnects | the route closes the encoder (`streams/controller.py:1267`), whose feeder closes its input (`helpers/ffmpeg.py:321-322`), which runs the `finally` |
-| The source fails | the read raises, the generator ends through its `finally` |
-| The task is cancelled | the cancellation lands in the generator, same `finally` |
-| The stream is superseded | the route breaks out (`streams/controller.py:1269-1277`), the flow generator returns (`audio.py:2931-2936`); both close the stream |
-| A wait for the buffer ends, with audio, a timeout or an error | the wait removes itself |
-| A flow generator ends, in whatever way | its outer `finally` releases its claim (`audio.py:3276-3277`) |
-| A transfer | a user is attached to one buffer object. When it ends late it can only touch that object, which the source queue's stop already cleared. The target's buffer has its own users |
-| A user that never ends (a leaked generator) | Python closes an abandoned generator when it is collected (assumption, not probed). Until then the source is kept. The forced releases below and the inactivity timeout do not ask for users |
+| `refuse_held_stream_slot` (`:209-236`) | reads `buffer.is_realtime` instead of the item's details |
+| `_paused_stream_slot_holder` (`:585-601`) | none; it only uses the queue id |
+| `release_paused_stream_slot` (`:268-301`) | none |
 
-When the last user leaves, moment 2 runs.
+One case comes out differently: a holder whose item left the queue's list is found. A holder
+that has its slot and no audio yet is not refused behind, as today: without the readiness
+condition a start would be refused at once where today it waits and gets the slot when that
+source fails. A buffer that still waits for a slot is not a holder in either version.
 
-**Forced releases stay as they are** and do not ask for users, because they end the playback the
-users belong to: stop, clear, replace, end of queue, detach and remove (R8, R9), the start of an
-item (R11), the paused handover (R13), a failed buffer (R3) and the inactivity timeout (R4).
+## 2. The audio in a queue's scope
 
-### 3.6 What it replaces, what stays, what can go
+### 2.1 What the queue knows
 
-**Not needed any more (all of pull request 7762's additions):** `flow_incoming_item_id`,
-`release_left_item_source` with its buffer identity check and its "on no queue" check, the
-release at the end of a stream request, `drop_fade_into`, and `_release_superseded_sources`
-reading `requested_item_ids` and `fade_into_pending`.
+* **Its buffers.** `PlayerQueueData` gets a runtime-only record `(queue item, buffer)`.
+  `get_buffer` reports every new buffer to the queue, which also puts the queue id and the
+  item on the buffer (1.2). An entry whose buffer was cleared is dropped when the next buffer
+  is recorded and whenever the record is walked, so it never grows beyond the buffers that
+  still hold audio. Today a buffer whose item left the list is out of reach
+  (`stream_feeder.py:140-145`, `queue_loader.py:1441`).
+* **Its position**: `current_index` and `index_in_buffer`.
+* **The claims of its streams**, as on `dev` (`audio.py:425`, `:4358`): the item a stream
+  decided to play, for the session it was made in.
+* **The readers of a buffer**, as on `dev` (`audio_buffer.py:94-127`): the `BufferUser` a
+  stream holds from the moment it takes the buffer, and every open read.
 
-**Gaps on `dev` that close without a special case:**
+### 2.2 Definition
 
-* R12 cannot find an item that left the queue. The rule reaches a source through its users and
-  through the provider's holders, never through a queue lookup.
-* The request path looks for a holder only among the items the speaker asked for (the second
-  observation in the appendix). Moment 1 asks the sources that actually hold the slots.
-* R5 and R6 stop working when the preparation task ends. The wait of the preparation is a user;
-  what happens to the source afterwards no longer depends on a task still running.
+An item of a queue with a session is **playing** (at `current_index` or `index_in_buffer`),
+**next** (`get_next_item` of either; with playing this is `plays_now_or_next`,
+`controller.py:2388-2416`), **claimed** (a stream of the current session decided to play it,
+on the queue or not), or **previous** (before `index_in_buffer`, for audio that has fully
+arrived only; the window R7 keeps, `stream_feeder.py:470-473`).
 
-**Can be deleted (step 3):**
+A buffer is **in scope** when
 
-* R5, the check after the preparation: the preparation's wait is a user, and when it ends a
-  source whose item left the queue or whose queue has no session is not needed.
-* R2's "last access more than 30 s ago" guess and its wait for the inactivity timeout: a replaced
-  buffer with no user is stopped at once, one with a user when that user ends.
-* R10's outright clear of the discarded tail: the rule in `update_items` covers it and spares a
-  track a flow stream holds.
-* R13's inference of who holds a slot: read the provider's holders instead.
+1. a stream reads it or waits to read it; or
+2. it is still the buffer of its item, and that item is playing, next, claimed or previous.
 
-**Stays:**
+A queue without a session has no scope: no audio is made for it (2.5). The branch of
+`plays_now_or_next` for such a queue (`controller.py:2405-2407`) goes, with the lobby preload
+of the music quiz, its only user (2.7).
 
-* R12 and its request history. It answers another question: "did the player move on by itself
-  from the track the queue still shows as current?" Position cannot tell, only the requests can.
-* R11 at the start of an item: a start beats everything else on its queue, including its own
-  prepared successor.
-* The session stamp, `index_in_buffer`, `next_item_id_preparing` (it keeps one preparation per
-  queue), `next_item_id_enqueued`, and the fade markers `_crossfade_pending` and
-  `_crossfade_handover`. They keep their own jobs; none of them decides a release in the new code.
+**A wait is not a reader.** A caller that only waits for a buffer to become ready, the
+preparation or a start, is a stand-in user today (`audio_buffer.py:622-625`, `:653`), and that
+stand-in keeps a buffer whose track is gone (P11). It stops counting for rule 1. When such a
+wait ends the check still runs, as today. A stream that waits for its own audio passes its
+`BufferUser` in and counts.
 
-### 3.7 Two small extras that do not follow from the rule
+**The track a start is trying is playing.** A start that fails on an item with an ordinary
+audio error moves on to the next one in its own loop (`controller.py:3236-3317`), while
+`index_in_buffer` still names the first (`:3174`) and `current_index` only moves after a load
+(`:3249`). The start moves `index_in_buffer` to the item it tries before each load, so that
+item is in scope through the retries and the check of 2.5 does not turn it away.
 
-* **With step 2: a stream opens no new source for an item that is on no queue.** One check in
-  `_get_audio_buffer`, next to the one for a consumer that left (`audio.py:4052-4057`). Without
-  it a speaker that stays connected to a track removed at the edit would have the request open a
-  fresh source for audio nobody will hear. It matches what the route already answers when the
-  request comes a moment later (`streams/controller.py:935-937`).
-* **Optional, with step 2: the preparation checks `plays_now_or_next` before it opens the
-  source.** Without it the rule still stops the source (probe), after one wasted open.
+### 2.3 The one function
+
+`PlayerQueuesController._enforce_scope(queue_data)` walks the record and asks every buffer to
+let go if it is out of scope. For one buffer that is `release_if_unneeded`
+(`audio_buffer.py:257-280`), with three changes: the queue's scope answers `may_release` (in
+place of `_may_release_source` and its free-slot gate, `audio.py:4326-4356`, `:4337-4339`); a
+buffer whose source is done is freed too (today it returns at `:270`); and the release wakes
+whoever waits for the buffer, so a preparation that is no longer needed ends there instead of
+at its timeout (`audio_buffer.py:660-702`). The decision and the mark that makes the buffer
+invalid are one synchronous step (`:278`); it is detached from its item and cleared in a task.
+
+It never touches a buffer a stream reads.
+
+### 2.4 When it runs
+
+| Moment | Where |
+|---|---|
+| A session starts; a session ends | `_play_index` after `controller.py:3203`; `_end_session` (`:2655`) |
+| The items change | `update_items` (`controller.py:2118`): every edit, load, plugin splice, clear, restore, transfer, and shuffle (`:2989`) |
+| The position changes | `track_loaded_in_buffer` (`controller.py:1855`), the fade selection (`audio.py:2351`), another current item (`playback_tracker.py:332`), `mark_ended` (`controller.py:963`) |
+| What plays next changes otherwise | see below |
+| A claim ends or moves | `_claim_item` (`audio.py:4358`), as on `dev` |
+| The last reader leaves; a wait ends | `_drop_user` (`audio_buffer.py:635-638`), as on `dev` |
+| A buffer is replaced | `get_buffer`, where it detaches the old one (`audio_buffer.py:574`): that buffer is asked at once, also when it was never read and the provider has a slot to spare. A reader keeps it; R2's release on a full provider stays |
+| The queue is about to get audio | `_get_audio_buffer`, before the candidates are tried, and the checks of 2.5 |
+
+**What plays next without the items or the position changing.** `get_next_item` reads four
+things (`queue_loader.py:635-672`, `controller.py:2365`): the list, the repeat mode, the sleep
+timer target and whether an item is available.
+
+| What | Where it is written | Moment |
+|---|---|---|
+| Repeat | `set_repeat` (`controller.py:555`) | yes. The two other writers are followed by a load of items (a transfer, entering dynamic mode) |
+| Sleep timer target set | `set_sleep_timer_target` (`controller.py:671`) | yes |
+| Sleep timer target moved to the item that plays now | `_repin_sleep_timer` (`:2847`) | yes |
+| Sleep timer target dropped | `_forget_sleep_timer_target` (`:2869-2878`), which the drop, the clear and the timer's own stop go through | yes |
+| An item marked unavailable | `load_next_queue_item` (`controller.py:1836-1838`) | already ends in `update_items` |
+| An item marked unavailable elsewhere | `audio.py:1822`, `:2075`, `streams/controller.py:1096`, `controller.py:3294` | no: what is left is that item's own failed buffer, which clears itself (R3) |
+| Shuffle | reorders the items | `update_items` |
+
+**What a missed moment costs.** Memory, until the next moment of that queue, at the latest
+the end of its session or the inactivity timeout (R4). On a provider without a free slot it
+also costs a slot until a track asks for one: the check of step 1 at that point stays
+(`audio.py:4214`, `:4402-4431`) and asks with the queue's scope. P6 is that cost on `dev`.
+
+### 2.5 The last check is at the source
+
+The queue is asked the same question, "is there a session, and is this item playing, next or
+claimed", at three places. Each sits after a wait and before the thing the wait was for.
+
+| Where | After | Before | When the answer is no |
+|---|---|---|---|
+| `get_buffer` (`audio_buffer.py:605-607`) | the format probe returned | `_new_buffer` | no buffer; `_get_audio_buffer` returns None, as for a consumer that left (`audio.py:4217-4222`) |
+| the format probe (`audio_buffer.py:1149`) | it has its seat | it opens the source to probe it | no probe, no buffer |
+| the producer, in `get_media_stream` (`audio.py:914-916`) | it has its seat | the first read of the source, which is what opens it | the buffer lets go (2.3), nothing is opened, the seat goes back, and it does not count as a source that delivered everything (`audio_buffer.py:449-455`) |
+
+The third is the one the second review asked for: `fill()` only schedules the producer
+(`audio_buffer.py:478-480`), and the producer may wait for a seat long after the buffer was
+made (P11). With 2.2 the buffer of P11 is released at the edit already, and its producer is
+cancelled while it waits, without a seat; the check at the source covers an edit whose moment
+was missed.
+
+### 2.6 What forces a buffer out although it is read
+
+The function never does. These paths do, and they stay as they are:
+
+| Path | Why it may |
+|---|---|
+| A stop, a clear, a replace, the end of a queue (R8, `stream_feeder.py:509-556`); a detach, a removal (R9, `controller.py:2687`) | the playback its readers belong to is over; the server ends those streams itself (`streams/controller.py:1294-1302`, `audio.py:2779`) |
+| A replaced buffer on a provider without a free slot (R2) | the replacement cannot start while the old source holds the slot (P2) |
+| A start on a provider with a limit (R11); a speaker that moved on (R12); a paused queue that hands over (R13) | the track that plays needs the slot |
+| A dynamic rebuild (R10, `queue_loader.py:1440-1445`) | today's behaviour, until step 5 |
+
+### 2.7 The quiz lobby
+
+Decided: the music quiz no longer buffers the first track of a round in its lobby.
+`_warm_first_track` keeps its staging of the item (`providers/music_quiz/__init__.py:1549-1564`)
+and loses the buffer call (`:1565-1575`) and the import only that call used (`:88`). Later
+rounds are prepared inside a session (`:1622`) and are not touched. Nothing else makes audio
+for a queue without a session.
+
+## 3. What it replaces
+
+| # | Today | In the design |
+|---|---|---|
+| R1 | the producer holds a slot and is listed | stays; the listed buffer knows its queue and item |
+| R2 | a replaced buffer: cleared on a full provider, or after a 30 s guess that never fires (`audio_buffer.py:299-300`), else left for its reader | stays; the guess goes in step 4, the buffer goes when its reader leaves |
+| R3, R4 | a failed buffer; 300 s without access | stay |
+| R5 | after the preparation's wait: clear when the item left or the session ended (`stream_feeder.py:140-152`) | goes in step 4: 2.5, the edit, and the end of the preparation's wait cover it |
+| R6 | a cancelled preparation clears its half-filled source (`stream_feeder.py:155-165`) | goes in step 4: its wait no longer keeps the buffer (2.2) |
+| R7 | clears index <= current - 2 (`stream_feeder.py:466-507`) | goes in step 4: "the position changes" |
+| R8, R9, R11, R12 | forced releases and arbitration | stay |
+| R10 | a dynamic rebuild clears the discarded tail, also while read | goes in step 5, as its own change |
+| R13 | a paused queue hands over; who holds is inferred | stays; the inference is replaced by the fact (1.5) |
+| R14 | fade data | stays |
+
+Of step 1 of the first design everything stays: the readers, the claims,
+`release_if_unneeded`, the holder set, the check when a track needs a slot. What changes is
+who answers `may_release` (the queue's scope, without the free-slot gate) and what counts as
+a reader (2.2).
 
 ## 4. Proof against the known sequences
 
-"Rule" means it follows from 3.2 and 3.3 with the registrations of 3.1. "Extra" names what else
-is needed.
-
-| Sequence | How the design handles it | Follows from |
+| Sequence | What happens | Follows from |
 |---|---|---|
-| **Incident: replace next**, one slot, playback pace | the prepared track has no user and is on no queue. Step 1: stopped when the new next track asks for the slot. Step 2: stopped at the edit | Rule. Probed |
-| **Incident: play next** | the prepared track is still on the queue, no longer next, its provider is full: stopped as above | Rule. Probed |
-| **Incident: remove** | as replace next | Rule. Probed |
-| **Incident: move** | as play next | Rule. Probed |
-| The request path aborts the abandoned request and not the capture | moment 1 asks the provider's real holders | Rule |
-| **1.** Flow mode, "play next" while the fade into the incoming track is built | the flow generator's claim makes the track in use | Rule, given the one explicit claim of 3.1. The round 1 test passes |
-| **2.** Repeat: the prepared track across the wrap | "next" is `get_next_item`, no index comparison | Rule. Probed |
-| **3.** A removed track with an open stream request | the reader is a user. When the request ends, in whatever way, moment 2 stops the source; a track already waiting gets the slot | Rule. Probed, including the waiting track |
-| **4.** A superseded flow stream overwrote the marker | there is no shared marker; a generator can only release its own claim | Rule. The round 2 test passes |
-| **5.** Transfer: the cleanup of an old request cleared the target's buffer | a user's end can only touch the buffer it was attached to | Rule. Probed, with the transfer built by hand. The round 3 identity case holds for the same reason |
-| **6.** A second flow generator in the same session | as 4: claims are per generator, not per session | Rule. Probed |
-| **7.** A request that produced no output leaves a removed, prepared source | it never registered a user: the source is not needed from the edit on. If it had taken the buffer, it is a user until the request ends | Rule. Probed both ways. Extra 3.7 (first) for a speaker that stays connected |
-| **8.** A flow stream ends while it protects a removed incoming source | the claim goes in the generator's `finally`, moment 2 stops the source | Rule. Probed |
-| Window: a moved track that a fade already leads into | outside flow mode the track a fade is mixed into is `index_in_buffer` from its selection (`audio.py:2225`, before the pending marker at `:2265`), so it cannot be moved or removed (`controller.py:864-867`, `:937-942`). In flow mode the generator's claim holds it. A declared overlap claims the hand-off at the start of its item (`audio.py:2121-2124`) and reads nothing until the end | Rule. Nothing fade-specific is needed. From code reading; the test of pull request 7762 for this sets the marker by hand |
-| Window: "next" lands while the preparation still fetches details | the preparation opens the source, its wait is a user, and when it ends the source is not needed: stopped | Rule. Probed. Extra 3.7 (second) avoids the wasted open |
-| Window: the sweep at the next request does nothing for a track that left the queue | see 3 | Rule |
-| Window: a dynamic rebuild in flow mode drops the track the flow fades into | with step 3 the rebuild no longer clears a source a flow stream holds, so the track plays in full. **Not solved:** after that track the flow asks for "next after it", the track is no longer on the queue, and the flow ends as if the queue ran out (`controller.py:1784-1787`), then resumes when the player goes idle | Half. The source: rule. The continuation: unchanged from `dev` |
-| Window: the "Aborting the source of ..." line also fires for a source without a slot | the provider knows its holders, so the line can be limited to them | The holder set, step 3. Not the rule |
-| Window: a request waits 15 s for a slot while a speaker may give up after 10 | not addressed. With the rule a request only waits for a source that is needed, so the wait is right; the number is open question 3 | Not covered |
+| **Incident**: replace next, play next, remove, move, on a one-stream provider at playback pace | the edit runs the function: prepared B is not next, nobody reads it, no stream claims it. Invalid, detached, stopped. Its slot is reserved for the queue, so the new next track gets it | Scope; reservation |
+| Findings 1 to 8 of pull request 7762 | as in the earlier versions: the flow stream's claim (1, 4, 6, 8), `get_next_item` (2), the reader and the claim of an open request (3, 7), a queue walks only its own record (5) | Scope |
+| A "next" that lands while the preparation fetches details, probes the format, or waits for a slot | 2.5: nothing is opened for it | Scope |
+| A dynamic rebuild drops the track the flow fades into | as `dev` until step 5, then its audio is spared. **Not solved:** the flow then finds no successor and ends as if the queue ran out | Half |
+| 7800: a buffer being released can be taken; a claim before the buffer exists; an old playback's claim after a transfer | invalid in the same step as the decision; the scope is asked per item; claims count for the current session | Scope |
+| Review 1, 2: a buffer is replaced while a stream reads it | in scope by its reader; on a full provider R2 cuts it, as today (P2) | Scope; existing |
+| Review 1, 3 and review 2, 2: audio made, or a source opened, after an edit | 2.5 and 2.2 (P3, P11) | Scope |
+| Review 1, 6 and review 2, 4: repeat, the sleep timer | moments of 2.4 (P6) | Scope |
+| **A queue moves to its next track while another asks** (P8) | the slot of the source that ended is reserved for the first queue; the other waits. The first queue's next source takes it | Reservation |
+| **A queue skips while another asks** (P10) | the same, for the slot R11 freed | Reservation |
+| A preview waits when the source ends (P9) | it keeps waiting; the queue's next source goes first | Reservation |
+| Two queues on a one-stream provider at playback pace | the second is refused at once, as today (P7) | Existing |
+| Two queues on a one-stream provider that loads ahead | both play, as today (P1a) | Accepted |
+| Pause and resume; the pause timeout | nothing changes; the stop of the timeout ends the session, and with it scope and reservation | Existing |
+| A paused queue whose slot another queue needs | stopped (R13); its session is over, so its release makes no reservation and the other queue gets the slot at once | Existing |
+| A seek the buffer cannot serve, one stream | R2 clears the replaced source; its slot is reserved for the same queue | Existing; reservation |
+| Crossfade and flow mode | both tracks in scope; sources one after the other on a one-stream provider, as today | Scope |
+| A player that fetched the next track early; one that moves on by itself | its request reads and claims the track; R12 | Scope; existing |
+| A transfer; a group whose leader changes | the source queue is stopped: no scope, no reservation. The target starts as any queue | Scope |
+| A restore; a plugin that splices items in | `update_items` | Scope |
+| A mixed queue that alternates providers | each track asks for a slot when it needs one, as today. A reservation lapses unused when the next track is from elsewhere | Existing |
+| The quiz lobby | no preload; the first round starts as any play does | Decided |
 
-## 5. Alternatives
+**A request that was connected when its track was removed (decision 7).** It reads and has
+claimed the track, so the track is in scope until that request ends, as on `dev`. A source for
+an item that is not playing, next or claimed is not opened (2.5). The extra of the first
+design is left out.
 
-**(a) The narrow variant.** In `update_items`: when the item in `next_item_id_preparing` left the
-queue or no longer plays next, the queue is not in flow mode and no request is open for it, abort
-its source.
+## 5. What users will notice
 
-* Cost: about 30 lines and a handful of tests. No risk in flow mode, because it does nothing
-  there.
-* It ends the incident for a per-item player that has not fetched the next track yet.
-* It leaves open: flow mode (the same preparation, the same stale capture), a player that
-  fetched the next track early (its source is not released, also not when that request ends:
-  finding 3),
-  the window while the preparation fetches details, the search for the real holder at the next
-  request. It still reads `requested_item_ids`, which does not see direct PCM consumers.
-* Every later widening is another marker.
+* **A speaker that plays from a service at playback pace keeps it across a track change.**
+  Another speaker that asks in that moment no longer takes the stream away, which today costs
+  the first speaker its next track or stops it at a skip (P8, P10).
+* **For that other speaker the service is busy a few seconds longer.** It starts a little
+  later, or gets the refusal it gets today. No new kind of refusal and no new text.
+* **A preview that waits for such a service no longer slips in between two tracks.** It ends
+  in the error it gets today at any other moment of the track. After the last track of a
+  queue it gets the stream as today.
+* **A prepared track that was moved down or replaced no longer blocks the track that plays
+  next**, on every service. It is loaded again when its turn comes.
+* **Memory**: the audio of a removed or passed track is freed at once when nobody reads it.
+* **Music quiz**: the first round starts as any play does, without audio prepared in the lobby.
 
-**(b) One more round on pull request 7762.** Fix findings 6, 7 and 8 on top of its last head.
+Unchanged: the limits and what they count, two speakers on a service that loads ahead,
+crossfade and flow mode, pause and resume, a stream that still reads its audio.
 
-* Finding 6 needs the marker per generator. Finding 7 needs a record of removed items that a
-  request still holds. Finding 8 needs a release when a flow stream ends. Each is a piece of the
-  user set, built as a special case for one consumer.
-* Cost: an estimated 80 to 120 lines on top of its 141, a fifth review round, and the same kind
-  of gap for the next consumer nobody listed (the prefetcher and the direct PCM streams have no
-  marker today).
-* It leaves all six windows as they are.
+## 6. Stored data and interfaces
 
-**(c) The proposal.** Users on the buffer, holders on the provider, one rule.
+* **Config entries, database rows, API commands, events, texts a user reads:** none changes.
+  No migration.
+* **`MusicProvider`:** `acquire_stream_slot` gets an optional queue id; the semaphore becomes a
+  counter with a condition. `max_concurrent_streams` keeps its name, values and docstring. The
+  Ynison protocol (`providers/yandex_ynison/protocols.py:49`) passes no queue and is not touched.
+* **`AudioBuffer`:** the queue id and the item it was made for. **`PlayerQueueData`:** the
+  record of buffers. Both runtime only.
+* **One constant**, `STREAM_SLOT_RESERVATION`, next to the wait budgets.
 
-* Cost: about 150 lines in step 1, three pull requests in total, some 60 existing tests whose
-  stand-ins need a new member.
-* It leaves open: the half of the dynamic rebuild window, the 15 s wait, and the open
-  questions below.
+## 7. Steps
 
-**Chosen: (c).** Four rounds showed that the hard part is "is it in use", not "release
-it". (a) and (b) keep answering that from markers per kind of user. (c) answers it in the two
-places every user passes through, so a new kind of consumer is covered without knowing about it.
-Its first step has a blast radius close to (a): it stops nothing that is reachable unless a
-provider is out of slots.
+Each ships alone. Sizes are source lines plus test lines and are meant to include the rig work
+that made the earlier step of this work four times its estimate.
 
-## 6. Steps
+| Step | Source | Tests | Total |
+|---|---|---|---|
+| 1. The record | about 60 | about 200 | about 260 |
+| 2. The cleanup | about 230 | about 650 | about 880 |
+| 3. The slot | about 110 | about 350 | about 460 |
+| 4. Deletions | about 110 out | about 150 | about 260 |
+| 5. R10 | about 10 out | about 100 | about 110 |
 
-These take the place of pull request 7762, which is closed. Its test rig and its incident
-tests are reused; its four tests that set a marker by hand are rewritten with a real reader.
+### Step 1: a buffer knows its queue and its track
 
-### Step 1: a track that needs a stream slot gets it from a source nobody needs
+* **Contents.** `get_buffer` reports a new buffer to the queue; the queue records it and puts
+  its id and the item on the buffer; both in the diagnostics. Recording a buffer drops the
+  entries whose buffer was cleared. Nothing else reads them yet.
+* **Changes no behaviour.**
+* **New tests.** The record and the owner for every creator: a start, the preparation, a
+  speaker's request, the flow stream and its prefetch, a seek that replaces the buffer, the
+  target of a transfer; an entry whose buffer was cleared is gone at the next walk; a buffer of
+  an item that left the list is still there.
 
-* Contents: users on the buffer (3.1), the user of `get_queue_item_stream`, the flow generator's
-  claim, the holders on the provider, `plays_now_or_next`, and the rule at moments 1 and 2. No
-  change in any queue edit path.
-* Size: about 150 source lines in `audio_buffer.py`, `audio.py`, `models/music_provider.py` and the
-  queue controller; about 350 test lines; one-line changes to the stand-in helpers of five test
-  files.
-* **Ends the incident: yes, in all four forms.** Probed: with the edit hook switched off every
-  incident test passes. The stale capture lives on until the next track asks for the slot, then
-  gives way within the stop.
-* Safe on its own: it stops a source in two cases only. Its provider has no free slot and the
-  source is not needed; or its last user leaves and nothing can reach it any more (its track is
-  on no queue, or a seek replaced its buffer). A replaced buffer is never read again
-  (`audio.py:1778-1782`). On a provider with a slot to spare nothing else changes.
-* Unit tests: the incident tests; a reader, a waiting request, a prefetch and a flow claim each
-  keep a source that left the queue, and its end releases it; a boundary mix that reads the next
-  track registers as its user; two
-  flow generators in one session; a transfer; a prepared track that still plays next is never
-  taken, by a request of its own queue or of another one; a source that is in use is never taken;
-  one test per kind of consumer that asserts `users` while it reads.
-* Lab, on an account with one slot that delivers at playback pace (assumes the lab has one):
-  * a per-item player (Squeezelite, DLNA): in the last 30 seconds of a track do replace next,
-    play next, remove next, move next, five edits in a row. The next track starts and the log has
-    no stream limit error.
-  * the same on a player set to flow mode with crossfade, with the edit inside the last 15
-    seconds. The incoming track plays in full.
-  * repeat all, play next on the last track.
-  * a player that fetches the next track early: the edit after that fetch.
-  * two players on one account: a stale source on the first, a start on the second (it starts);
-    the first really playing, a start on the second (refused, as today).
-  * a transfer to another player while playing, then an edit.
+### Step 2: audio that left a queue's scope is released at once
 
-### Step 2: a track taken off the queue stops loading at once
+* **Contents.** Section 2: the scope, the function at the moments of 2.4, the three checks of
+  2.5, a wait that is not a reader, `may_release` answered by the queue without the free-slot
+  gate, complete buffers freed. A start keeps the track it tries in scope (2.2) and a
+  replaced buffer is asked at that moment (2.4). The lobby preload of the quiz and the branch
+  of `plays_now_or_next` for a queue without a session go. Every older path stays in place.
+  It uses nothing of step 3.
+* **What changes.** A buffer nobody reads goes when it leaves the scope, also on a provider
+  with a free slot and also when it is complete; a track that left the queue is not fetched.
+  Nothing that is read is touched that `dev` leaves alone.
+* **Tests that pin what it changes.**
+  * `tests/controllers/player_queues/test_stale_capture_slot.py`: the five that say a provider
+    with a slot to spare keeps a capture (`:836`, `:857`, `:883`, `:905`, `:925`).
+  * The two quiz tests there go: `test_a_track_the_quiz_buffered_in_its_lobby_keeps_its_audio`
+    (`:729`), `test_a_staged_track_keeps_the_only_stream_until_its_queue_is_cleared` (`:755`),
+    with the rig's `idle_queue` and `warm_first_quiz_track`
+    (`tests/controllers/streams/stream_slot_rig.py:290`, `:308`).
+  * `tests/providers/music_quiz/test_plugin.py`:
+    `test_warm_first_track_stages_and_buffers_it_on_an_idle_target` (`:6170`) and
+    `test_warm_first_track_stages_on_the_remote_virtual_player` (`:6221`) assert the staging
+    only; `test_warm_first_track_keeps_the_staged_item_when_buffering_fails` (`:6270`) goes;
+    `:6199`, `:6240` and `:6255` lose their assertion that nothing was buffered; the helper at
+    `:6143` no longer installs `get_audio_buffer`.
+  * `tests/controllers/streams/test_buffer_users.py`:
+    `test_a_wait_for_the_first_audio_counts_as_a_user` (`:108`, a wait is not a reader),
+    `test_a_source_that_delivered_everything_is_left_alone` (`:205`, complete buffers go too),
+    `test_a_queue_that_is_not_playing_plays_next_the_item_it_is_on` (`:280`, that branch goes),
+    `test_a_provider_with_a_slot_to_spare_keeps_every_source` (`:342`, the gate goes).
+* **New tests.** A start that fails on two tracks with an ordinary audio error plays the
+  third; an unread prepared buffer that is replaced goes at once, with a slot to spare and
+  without a limit. Each of the four edits releases at the edit, filling and complete, with and
+  without a limit; an edit that keeps the next track releases nothing; a track a stream reads
+  or claimed survives the edit and goes when the stream ends; a replaced buffer survives its
+  reader (P2); P3 and P11 open no source, and the preparation's wait ends at the edit; repeat
+  one and each change of the sleep timer target release the prepared track, set after the
+  preparation has finished; a queue without a session gets no audio; each moment and each of
+  the three checks switched off in turn fails a test.
+* **Lab.** On a per-item player and on a flow-mode player with crossfade, on the one-stream
+  account: replace next, play next, remove, move, five edits in a row, each in the last 30
+  seconds of a track; the same with repeat all on the last track; an edit after the player
+  fetched the next track; skip, previous, seek inside and outside the buffer; repeat one and a
+  sleep timer at the end of the track, switched on and off; a dynamic queue with an add in
+  flow mode; a transfer, then an edit.
 
-* Contents: moment 3 in `update_items`, the first extra of 3.7, and optionally the second.
-* Size: about 40 source lines, about 150 test lines.
-* Not needed for the incident. It stops a playback-pace source from playing a track to the
-  service that nobody hears, and frees the audio of removed items at the edit instead of at the
-  next request. From code reading, not probed: it also releases what a transfer leaves behind on
-  a target that was playing (`transfer_queue` loads the new items at `controller.py:1531` without
-  releasing the target's old audio).
-* Unit tests: the four edits release at the edit; an edit that keeps the next track releases
-  nothing; a removed track with a connected speaker opens no new source; every caller of
-  `update_items` listed in section 2 with a prepared next track.
-* Lab: the step 1 runs again, plus a count of source opens per track on a provider with several
-  slots while a plugin splices clips in front of the prepared track. One open per track, as
-  before.
+### Step 3: a speaker keeps its service across a track change
 
-### Step 3: delete what the rule covers
+* **Contents.** Section 1: the queue on `acquire_stream_slot`, the reservation (after a
+  source at playback pace, and only when the queue goes on with that provider), its early end
+  in `_end_session`, `_held_stream_slots` on the provider's holders with today's readiness
+  condition. It uses the owner of step 1 and nothing of step 2.
+* **What changes.** Section 5, the first two points.
+* **Tests that pin what it changes.**
+  * `tests/models/test_music_provider.py`: `:112`, `:154`, `:174` stay as they are and have to
+    pass on the new counter.
+  * `tests/controllers/player_queues/test_stale_capture_slot.py::test_a_stale_capture_gives_its_slot_to_another_queue`
+    (`:819`): the other queue now gets the slot after the reservation, not within its 2 s.
+  * `tests/controllers/player_queues/test_paused_queue_slot.py` (26) and
+    `tests/controllers/streams/test_stream_capacity.py` should pass unchanged; `:554`, `:593`
+    and `:633` of the first are the ones that say who counts as a holder.
+* **New tests.** P8, P9 and P10 as tests; the reservation lapses and the other queue starts
+  within its budget; a stop, the pause timeout and a paused hand-over leave none; a second
+  slot of a provider with two is not held back; a cancelled wait takes nothing; the queue's own
+  request is never held by its own reservation. A preview that already waits gets the slot
+  after a queue's last track and waits behind a reservation otherwise; a holder without audio
+  yet is not refused behind. The counter itself: a grant and its reservation in one step, a
+  waiter woken when a reservation lapses, a wait cancelled after it was woken, the reserving
+  queue ahead of takers that waited longer.
+* **Lab.** Two virtual players on the one-stream account at playback pace: the second asks
+  again and again while the first plays an album through, skips, seeks and gets an edit; the
+  first never loses a track. The second starts within the reservation after the first was
+  stopped. From the debug log: the time between a source ending and the queue's next one
+  asking, at a track boundary and at a skip, to settle the length.
 
-* Contents: R5, the 30 second guess in R2, the outright clear in R10, `_held_stream_slots`
-  reading the provider's holders, the log line limited to real holders, the two README sections.
-* Size: about 40 lines out, 30 in.
-* Lab: the regression runs (seek, skip, pause past the pause timeout, a paused queue handing its
-  slot over, a dynamic queue with an enqueue in flow mode).
+### Step 4: delete what step 2 covers
 
-## 7. Risks and open questions
+* **Contents.** R5, R6, R7 and the 30 s guess of R2, each with the test of step 2 that fails
+  when its replacement is switched off. The two READMEs.
+* **Tests.** `tests/controllers/player_queues/test_stream_feeder.py`: `:365` (R6), `:525`,
+  `:592`, `:621` (R5); `tests/controllers/streams/test_audio_buffer.py`: `:815`. Retargeted at
+  what they protect.
+
+### Step 5: a dynamic rebuild spares a track that is read
+
+* **Contents.** R10 goes; the rebuild's `update_items` does the work.
+* **Tests.** `test_dynamic_rebuild_keeps_tail.py::test_an_add_releases_the_audio_of_the_items_it_drops`,
+  and three new ones (unread, read, claimed).
+
+## 8. Risks and open choices
 
 **Risks.**
 
-* A reader that bypasses `get_raw_stream` would be invisible. There is none for playback today;
-  the test per kind of consumer pins that.
-* A wrong "no" from `plays_now_or_next` costs a cold start of that track on a full provider. A
-  wrong "yes" is today's behaviour. Only a missing user can cut audio, and that is now one
-  mechanism in one file.
-* A user that never ends keeps a source that is not needed. The forced releases and the
-  inactivity timeout remain as the backstop. `users` belongs in the streams diagnostics and in
-  the debug line when a wait for a slot starts, so a lab run shows who holds what.
-* The prototype proved the rule, not the code. The real change has not been written or reviewed.
+1. **A start that lands in the reserved moment waits its 15 s out** when the first queue takes
+   the slot back, and then gets the limit error, where a moment earlier it is refused at once
+   by name (P7). If that is felt: the request first waits for the reservation to settle and
+   then decides as today.
+2. **The length is a guess until the lab has measured it.** Too short and P8 comes back in a
+   slow lookup; too long and another speaker waits for nothing.
+3. **The semaphore is replaced**, in one file, with the same bound. Its tests are few; the
+   lab's two-player runs are the real check.
+4. No code of the design exists. The probes measured `dev`.
 
-**Open questions, as choices** (the maintainer's answers are under Decisions).
+**Open choices.** None. Decided since this version: a reservation only after a source at
+playback pace; its length starts at 5 s and is corrected from the lab; all five steps are
+built, R10 as the last.
 
-1. **A prepared track that only moved down the queue.** (a) It gives way only when its provider
-   has no free slot: the proposal, as `dev` does at a start. (b) A playback-pace source always
-   gives way, because the service is told the track plays. Recommended: (a), and (b) only
-   if a service shows the wrong track as playing.
-2. **A speaker asks for a track that is not the next one while the next one is prepared** (it
-   jumped by itself). The rule keeps the prepared track, since it plays next by position, so the
-   request waits as on `dev`. (a) Leave it until someone reports it. (b) Within one queue, a
-   track a speaker asked for beats a prepared track nobody asked for. Recommended: (a).
-3. **15 seconds against a speaker's 10.** (a) Leave `STREAM_SLOT_PLAYBACK_WAIT_TIMEOUT`. (b)
-   Lower it below the shortest speaker timeout, as its own small change after the lab measured
-   which players give up when. Recommended: (b), after step 1.
-4. **Step 1 and step 2 together or apart.** Apart means a night in which a removed track keeps
-   capturing until the next track asks for the slot. Recommended: apart, step 1 first, step 2
-   after its lab run.
-5. **The new next track starts cold after an edit**, as after a skip: nothing prepares it again
-   when the edit comes after the preparation trigger. (a) Accept. (b) Start the preparation again
-   from the edit. Recommended: (a), and (b) only if the lab hears a gap at a gapless boundary.
-6. **Seen while testing, not caused or fixed by this:** in flow mode a "play next" that lands
-   after the flow selected its next track and before that track's first chunk is passed over by
-   that flow: it plays the selected track and continues after it. The round 1 test shows it (the
-   flow emits both tracks and never the inserted one); not checked on a running server. (a)
-   Leave it. (b) A follow-up that makes the flow commit its selection in the queue's position, as
-   the item route does (`audio.py:2225`). Recommended: a probe in the lab first.
+## 9. What the reviews changed
 
-## Appendix: what four review rounds found in pull request 7762
+**The maintainer's decisions since the first version.** The quiz lobby preload goes. The
+admission of queues goes completely: a slot stays one open source, in the name of a queue and
+a track, with a short reservation for the same queue; the limit keeps counting open sources.
+The mixed-queue rule for holding a slot and the question what the default of five counts no
+longer apply.
 
-### The defect
+**Review 1** (eight findings, all accepted).
 
-A music provider can limit how many source streams it serves at once
-(`max_concurrent_streams`); some allow one. A source that is being read holds a slot, and a
-provider that delivers audio at playback pace holds it for the length of the track. The
-queue prepares the next track ahead of time.
+| Finding | Now |
+|---|---|
+| 1. Cached audio bypasses the playback limit; 5. a reload forgets the owner; 7. the semaphore does not prove a playback limit | gone with the admission: no playback limit is claimed |
+| 2. Replacing a buffer can cut a reader | 2.2 rule 1, 2.6 |
+| 3. Audio created after an edit | 2.5 |
+| 4. Ending the session breaks an ended Sonos queue | no session is ended by the design |
+| 6. Hooks miss repeat and the next track's details | 2.4; the slot has no hooks |
+| 8. Steps not safe alone | section 7 |
 
-A queue edit that keeps the current track playing ("replace next", "play next", and from
-code reading removing or moving the upcoming track) goes through
-`PlayerQueuesController.update_items`, which swaps the item list and releases nothing. The
-capture of the prepared track that left the queue, or is no longer next, keeps the slot
-until the track has run out. Every track the speaker asks for meanwhile waits for the slot
-and is dropped. On a one-slot provider at playback pace that lasted eight tracks in the
-incident this came from. A second observation: the request path only looks for a holder
-among the items the speaker itself asked for, so it aborts the abandoned request (which
-never held the slot) and not the capture nobody needs.
+**Review 2** (six findings).
 
-The tests that prove it: `tests/controllers/player_queues/test_stale_capture_slot.py` on the
-branch (the cases named `test_the_track_that_plays_next_after_a_queue_change_gets_the_slot`
-fail on `dev` with `ProviderStreamLimitError`).
+| Finding | Now |
+|---|---|
+| 1. Queue state cannot tell whether a queue plays | gone with the admission; it is the reason the admission went |
+| 2. The last check is not at the source; a wait keeps a buffer | 2.5 and "a wait is not a reader" in 2.2, measured as P11 |
+| 3. A refusal can stop unrelated audio | gone with the admission: no refusal is added |
+| 4. Sleep timers change what is next without a moment | 2.4 |
+| 5. Previews and Ynison outside a playback limit | gone with the admission; they are takers without a queue (1.2) |
+| 6. Step 2 depended on step 3 | 2.5 asks only for a session and the item; steps 2 and 3 use nothing of each other |
 
-### The approach of pull request 7762
+**Review 3** (sound with changes; four findings, all confirmed in the code and accepted).
 
-`update_items` keeps the previous item list and calls `_release_superseded_sources`, which
-releases the still-filling sources of items that left the queue and, when its provider has
-no free slot, that of the prepared item that no longer plays next. Whether a source is
-still in use is inferred from separate markers: open stream requests
-(`requested_item_ids`), queue positions (`current_index`, `index_in_buffer`), a pending
-crossfade (`fade_into_pending`, `drop_fade_into`), and, added along the way, a field
-`PlayerQueueData.flow_incoming_item_id` that the flow generator writes, a release at the end
-of a stream request (`release_left_item_source`), a buffer identity check and an
-"on no queue at all" check.
-
-### Findings per round (each reproduced by the reviewer)
-
-Round 1, on the first version:
-
-1. Flow mode, a regression: while a flow stream has selected its incoming track and is
-   still building the crossfade into it, `index_in_buffer` names the track before it, so
-   "play next" released the incoming track's source and the track was skipped or cut short.
-2. Repeat: the prepared track across the wrap failed an index comparison and kept the slot.
-3. A removed track with an open stream request was never released when that request ended
-   (this one exists on `dev` too).
-
-Round 2, after the fixes for round 1:
-
-4. A flow stream that was superseded by a newer session wrote `flow_incoming_item_id` after
-   its load returned and so overwrote the marker of the active stream; "play next" then
-   cleared the source the active stream was fading into.
-5. `transfer_queue` hands the same `QueueItem` objects to the target queue; the cleanup of
-   an old stream request of the source queue then cleared the target's new buffer.
-
-Round 3, after the fixes for round 2:
-
-6. Blocker. The marker guard tells sessions apart, not producers within one session. A
-   reconnect can start a second flow generator in the same session while the first still
-   awaits its next track; when that load returns, the old generator overwrites the active
-   one's marker (`music_assistant/controllers/streams/audio.py`, the assignment of
-   `flow_incoming_item_id`). A following "play next" clears the source the active flow is
-   building its crossfade into. A probe with the real generator delivered 32 seconds
-   instead of 62.
-7. A request that produced no output leaves a removed, prepared source behind: the
-   preparation finished, the speaker requested the track, the request was suspended while
-   resolving source access, "replace next" removed the track (its source kept because of
-   the open request), the speaker disconnected, and the request returned without audio. The
-   cleanup has no buffer to release, and nothing else can find the removed item. The slot
-   stays taken until the source ends or the inactivity cleanup of about five minutes.
-8. Ending a flow stream does not release a removed incoming source it protected: the flow
-   selects B and builds its fade, "replace next" removes B (kept for that flow), the flow
-   disconnects during the build. B's capture keeps running and its marker stays published;
-   no queue cleanup can reach B any more.
-
-The reviewer of round 3 also showed a case in which the buffer identity check alone
-decides (the target of a transfer removes a still-open prefetch before the old source's
-cleanup runs), which the author had thought impossible.
-
-### Windows left open on purpose
-
-- A moved track that a fade already leads into keeps its capture.
-- A "next" that lands while the preparation still fetches stream details.
-- The sweep at the speaker's next request does nothing for a track that left the queue.
-- A dynamic queue's tail rebuild in flow mode can drop the track the flow stream is fading
-  into, as it does on `dev`.
-- The "Aborting the source of ..." log line also fires for a source that never got a slot.
-- A stream request waits 15 seconds for a slot while a speaker may give up after 10.
-
-### The pattern
-
-Every fix added shared state or a release path whose own life cycle then had a gap. Nothing
-in the code answers the question "who is using this source right now" directly; it is
-inferred, in several places, from markers that each cover one kind of user.
+| Finding | Now |
+|---|---|
+| 1. The check at the source turns a start's retry away | 2.2: the start moves `index_in_buffer` to the item it tries (step 2) |
+| 2. An unused reservation can make a preview fail | 1.3: none is made when the queue has nothing to go on with on that provider; what a waiting preview sees is in 1.3 and section 5 (step 3) |
+| 3. The holders as a fact add an immediate refusal | 1.5: the refusal keeps today's condition that the holder's audio is ready (step 3) |
+| 4. A replaced buffer is not checked when it is replaced | 2.4: it is asked at that moment (step 2) |
+| Tests missing from the inventory | section 7: `test_buffer_users.py:108`, `:205`, `:280`, `:342` in step 2, `test_stream_feeder.py:365` in step 4, the counter's tests in step 3 |
