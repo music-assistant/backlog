@@ -1,6 +1,6 @@
 # Community catalog: technical plan
 
-Status: proposal 2026-11-13, updated 2026-11-18. Owner: Marcel van der Veldt. This document is
+Status: proposal 2026-11-13, updated 2026-11-18 to match what is built. Owner: Marcel van der Veldt. This document is
 the technical companion of the "Community catalog" epic on the project board. It is written so
 it can be fed to an agent for implementation; every claim marked "verified" was checked in the
 server code at `7d5dd8e34` or in the referenced GitHub data on 2026-11-13. The Marketplace page that
@@ -10,8 +10,8 @@ presents built-in and community providers together is covered by
 Terminology: "provider" is the code and contributor term. A **built-in** provider ships in the
 server package. A **community provider** lives in its maintainer's own repository. The
 **registry** is the repository that lists community providers and publishes the index that
-servers read. In the app the collection is called the **community catalog**. A **server line**
-is what a server follows: a stable minor line such as 2.10, the beta or the nightly.
+servers read. In the app the collection is called the **community catalog**. A **channel** is
+what a server follows: the nightly, the beta, or one per stable minor version such as stable 2.11.
 
 ## Summary
 
@@ -129,14 +129,14 @@ keeps following up.
   provider is installed.
 - The community catalog can only be switched off while nothing the admin installed from it is
   still installed. A provider the server installed by itself because it moved does not count.
-- A server installs a community provider only when the index for its own server line lists that
+- A server installs a community provider only when the index of its own channel lists that
   exact version, and only after the downloaded files match the content hash in the index.
 - A blocked provider or version is not loaded. Its settings and library items are kept.
 - A community provider cannot take the domain of a built-in provider, and cannot present itself
   as built-in.
 - A community provider's requirements never change a package the server itself depends on.
-- After a server upgrade, an installed community provider that is not listed for the new server
-  line is switched to a listed version, or is not loaded and says why.
+- After a server upgrade, an installed community provider that is not listed for the new channel
+  is switched to a listed version, or is not loaded and says why.
 - A maintainer releases by publishing a GitHub release. Nobody on the team acts on it.
 - A failed or held release produces an issue for the maintainer with the reason.
 - Admission asks one decision from one person, on one screen.
@@ -208,7 +208,7 @@ A new repository in the Music Assistant organisation. It contains no provider co
 ```
 providers/<domain>/provider.json            written once, at admission
 providers/<domain>/versions/<version>.json  generated per release
-index/<server line>.json                    generated, what servers read
+site/v1/<channel>.json                      generated, what servers read
 ```
 
 - `provider.json`: `domain`, `repository` (`owner/name`), the folder inside it and, for a
@@ -217,17 +217,18 @@ index/<server line>.json                    generated, what servers read
   the admission record (who decided, when, which pull request).
 - `versions/<version>.json`: the release tag, the full commit SHA, a sha256 over the provider
   folder's files, a snapshot of the manifest, the requirements, and the result of every check
-  per server line.
-- `index/<server line>.json` (`index/2.10.json` for a stable line, `index/beta.json`,
-  `index/nightly.json`): for every listed provider the manifest data the app shows (name,
+  per channel.
+- `site/v1/<channel>.json` (`site/v1/2.11.json` for stable 2.11, `site/v1/beta.json`,
+  `site/v1/nightly.json`): for every listed provider the manifest data the app shows (name,
   description, type, icon, maintainers, documentation, support URL), the date it entered the
-  catalog, the newest version that passed for this server line, the last five versions that
+  catalog, the newest version that passed for this channel, the last five versions that
   passed, and per version the repository, commit, content hash, requirements and release date.
   It also carries the blocked and withdrawn entries.
 - The index files are published as static files behind a CDN on a project domain. A server
   reads one file, once a day, with an ETag and a random offset. No server calls the GitHub API.
-- Supported server lines are the current stable line, the beta and the nightly. When a new
-  stable line appears, the index of the previous one is frozen: its versions are no longer
+- The channels, listed in `channels.json` with the server image of each, are the current
+  stable version, the beta and the nightly. When a new stable version appears, the index of the
+  previous one is frozen: its versions are no longer
   recomputed, and blocked and withdrawn entries are still written to it.
 
 ### 3. Checks on every release
@@ -244,11 +245,11 @@ meant for the nightly only is a normal release.
 
 1. **Manifest.** Valid, the domain equals the admitted one, the version was not accepted
    before, no clash with a built-in domain.
-2. **Dependencies.** For each supported server line the requirements are resolved against that
-   server's pinned requirements as constraints. A clash, a package without a wheel for
-   Python 3.14 on amd64 and arm64, or a known vulnerability rejects the version for that line.
-3. **Load test.** In the official image of each supported server line: install, import the
-   module, parse the manifest, and run the provider's own tests where it has them.
+2. **Dependencies.** For each channel the requirements are resolved against that server's
+   pinned requirements as constraints. A clash, or a package without a wheel for Python 3.14 on
+   amd64 and arm64, rejects the version for that channel.
+3. **Load test.** In the server image of each channel: install, import the module and parse the
+   manifest.
 
 **Read**, by Claude through the registry's own API key, in a step that never runs code:
 
@@ -257,24 +258,28 @@ meant for the nightly only is a normal release.
 
 **Write**, by the Music Assistant Bot app:
 
-5. The version file, and the index of every server line the version passed for.
-6. For a failed or held version: an issue on the provider's repository with the output, or on
-   the registry when that repository has no issues.
+5. The version file, and the index of every channel the version passed for.
+6. For a failed or held version: one issue per provider on the registry, with the label
+   `release-check` and the output, that mentions its maintainers.
 
 Every night the newest listed version of each provider is tested again against the current
-image of every supported server line. A provider that stops loading on a server line falls back to the last version
+image of every channel. A provider that stops loading on a channel falls back to the last version
 that still passes there, or leaves that index, and the maintainer gets the issue with the
 failing output. With a ten week beta, a maintainer usually knows weeks before a stable release.
 
-A maintainer who wants to support the stable line and follow the nightly at the same time
+A maintainer who wants to support the stable channel and follow the nightly at the same time
 releases two versions; each ends up in the index it passes for.
+
+Not built yet: rejecting a version with a known vulnerability, and running the provider's own
+tests in the check step.
 
 ### 4. Admission
 
 - The maintainer submits the provider with the form, and the Music Assistant Bot app opens the
   pull request that adds `provider.json`. The checks of section 3 run on
   the latest release, plus: the repository is public and has an open source licence, the author
-  of the pull request owns or maintains it, and the domain is free.
+  of the issue (the form) owns the repository or is a code owner in its manifest, and the domain
+  is free.
 - Bot-MArley posts one summary: which service it talks to, how audio reaches the server,
   whether an account is needed, the dependencies, the hosts it contacts, and its verdict on the
   red lines.
@@ -293,24 +298,10 @@ releases two versions; each ends up in the index it passes for.
 Being listed means a provider did not cross a red line. It does not mean the project reviewed,
 tested or supports it, and the app says so where the admin switches the community catalog on.
 
-Declined at admission, and blocked when found later:
-
-- music the user has no right to: getting around an account, a subscription tier or a region,
-  and sources that offer music without the rights holders' permission;
-- getting around copy protection to give more than the service's own app gives the user's
-  account;
-- downloading or exporting music to keep it (a cache used for playback is fine);
-- harmful behaviour: sending the user's data elsewhere, loading code from somewhere else at
-  runtime, functions the description does not mention;
-- a provider whose only job is to load other providers or third-party source lists.
-
-Allowed, at the user's own risk: a small audience, working like the service's own app does for
-the user's own account (also by reverse engineering it: an unofficial API, or decoding protected
-audio to play it), reading a service's web pages, free public content in the quality the service
-offers without a subscription, and code that would not pass review for the server.
-
-The rules get their own page next to the usage policy, with how to report a provider and what
-happens to a blocked one.
+A provider is declined at admission, and blocked when found later, when it crosses one of the red
+lines of the [community catalog rules](https://github.com/music-assistant/.github/blob/main/COMMUNITY_CATALOG_RULES.md). That page also says
+what is allowed at the user's own risk, how to report a provider and what happens to a blocked
+one.
 
 ### 6. Server: installing and loading
 
@@ -323,8 +314,8 @@ happens to a blocked one.
   something the admin installed from it is still installed; a provider the server installed by
   itself because it moved does not count.
 - **Index.** While the switch is on or a community provider is installed, the server fetches
-  the index of its server line at start and once a day, and keeps the last copy. It picks the
-  file from its own version: the nightly, the beta, or the stable minor line.
+  the index of its channel at start and once a day, and keeps the last copy. It picks the
+  file from its own version: the nightly, the beta, or its stable minor version.
 - **Install.** Download the archive of the pinned commit from GitHub, take the provider folder,
   compare the content hash, and move it into `<data>/community_providers/<domain>` with an
   atomic swap. The previous version is kept for a rollback.
@@ -338,12 +329,12 @@ happens to a blocked one.
   package, so providers import as they do today. A folder loads only when the installed domain,
   version and content hash match an entry of the index that is not blocked. When the index
   cannot be fetched at start the server uses its last copy; right after an upgrade to another
-  server line that copy is of the previous line, and installed versions load unless it blocks
+  channel that copy is of the previous channel, and installed versions load unless it blocks
   them. A domain that exists built-in is refused. Safe mode loads no community provider.
 - **Development mode.** Only in development mode the server also loads providers from a local
   folder given at start, and the app shows that it runs in development mode.
 - **Daily check.** A blocked provider is unloaded with the reason. An installed version that is
-  not listed for this server line is switched to the newest listed one, or not loaded when none
+  not listed for this channel is switched to the newest listed one, or not loaded when none
   exists. A newer version is offered, or installed when automatic updates are on. A new version
   that fails to load is rolled back to the previous one when that is still listed and not
   blocked; otherwise the provider is not loaded and says why.
@@ -418,26 +409,26 @@ to the list of moved providers (`MOVED_PROVIDER_DOMAINS`) in the same change. Pr
 imports stay. Providers that import each other move together.
 
 **What keeps working.** A server of the release that drops the provider and that has a
-settings entry of it installs the provider from the index of its own line at start, by itself,
+settings entry of it installs the provider from the index of its own channel at start, by itself,
 also with the community catalog disabled. The settings entries and library items stay, because
 the domain stays. The app shows one notice that the provider is now maintained by its community
 maintainer. From then on it is an ordinary installed community provider; one the admin removes
-is never installed by itself again. Servers of earlier lines keep their built-in copy.
+is never installed by itself again. Servers on earlier channels keep their built-in copy.
 
 **Accepted gaps.** A server without internet access or in safe mode does not get a moved
 provider until it reaches the index; until then the provider's settings entries say why.
 
 **Timing.** Moves land in 2.11, once the community catalog is in the beta. The registry has an
-index for the 2.11 line before 2.11.0: the line is added to `server_lines.json` during the beta
+index for stable 2.11 before 2.11.0: the channel is added to `channels.json` during the beta
 with the beta image as its image, because `ghcr.io/music-assistant/server:2.11` only exists from
 2.11.0, and its image is switched to that one with the release.
 
 **Before the first folder is removed:**
 
-1. The registry has an index for the stable line (`server_lines.json` lists `2.11`).
+1. The registry has an index for the stable channel (`channels.json` lists `2.11`).
 2. The server's CI refuses a change that removes a provider folder or adds a domain to
-   `MOVED_PROVIDER_DOMAINS` until the indexes of the lines the change reaches (nightly, beta and
-   the line of the next release from that branch, as the release workflow names it) offer the
+   `MOVED_PROVIDER_DOMAINS` until the indexes of the channels the change reaches (nightly, beta
+   and the channel of the next release from that branch, as the release workflow names it) offer the
    provider with a version that passed. It also refuses a
    moved domain that still has a folder, and a removed provider the registry lists as moving that
    is not in the list.
@@ -454,7 +445,7 @@ with the beta image as its image, because `ghcr.io/music-assistant/server:2.11` 
    bot checks that the submitter is a code owner of the provider in the server, and the
    admission pull request adds the domain to `moving` in `reserved_domains.json`. A person of
    the core team admits it.
-3. The indexes of the lines the move reaches list the provider.
+3. The indexes of the channels the move reaches list the provider.
 4. One server pull request adds the domain to `MOVED_PROVIDER_DOMAINS` and removes the folder
    with its tests.
 5. The page on music-assistant.io points to the maintainer's documentation.
@@ -500,7 +491,7 @@ each released on its own through the community catalog with its own tag prefix. 
 merges fixes there, and no new features. This is code that shipped with the server before, so
 hosting it is nothing new. Users who have it set up get it from the catalog by themselves, also
 with the community catalog disabled, and keep their settings. A parked provider that stops
-loading on a server line and that nobody repairs leaves the index of that line.
+loading on a channel and that nobody repairs leaves the index of that channel.
 
 **Taking a parked provider over.** Whoever wants it says so on its issue, and the core team
 decides. The new maintainer puts the folder in a repository of their own and publishes a release
@@ -657,7 +648,7 @@ Steps 3 to 7 can run side by side. Step 8 needs 3 to 6 in a release.
 - Switching the community catalog off is refused while a provider the admin installed is still
   installed, and works once those are removed. A moved provider the server installed by itself
   keeps working with the switch off.
-- Installing a version that the index of the server's line does not list is refused. A download
+- Installing a version that the index of the server's channel does not list is refused. A download
   whose content hash differs is refused and leaves the installed version in place.
 - A provider marked blocked in the index is unloaded at the next daily check and at start, its
   settings and library items stay, and the admin sees the reason.
@@ -669,7 +660,7 @@ Steps 3 to 7 can run side by side. Step 8 needs 3 to 6 in a release.
   the same install on a server leaves the server's package untouched.
 - After an image update, an installed community provider loads without reinstalling its
   dependencies.
-- A release that imports on the stable line and fails on the nightly appears in the stable
+- A release that imports on the stable channel and fails on the nightly appears in the stable
   index only, and its maintainer gets one issue with the output.
 - Upgrading a server that uses a moved provider keeps the provider working, with its settings
   and library items, and shows the notice once.
