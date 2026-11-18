@@ -1,6 +1,6 @@
 # Community catalog: technical plan
 
-Status: proposal 2026-11-13, updated 2026-11-15. Owner: Marcel van der Veldt. This document is
+Status: proposal 2026-11-13, updated 2026-11-18. Owner: Marcel van der Veldt. This document is
 the technical companion of the "Community catalog" epic on the project board. It is written so
 it can be fed to an agent for implementation; every claim marked "verified" was checked in the
 server code at `7d5dd8e34` or in the referenced GitHub data on 2026-11-13. The Marketplace page that
@@ -101,6 +101,27 @@ keeps following up.
 - **A menu action declares what is shown, not what is called.** One command of the server runs
   the action on the provider instance the user chose; a provider registers no command of its
   own. Every entry shows which provider it comes from. See section 11.
+
+## Decisions taken on 2026-11-18
+
+- **A maintainer chooses to move.** A provider that is actively maintained moves to the
+  community catalog only when its maintainer chooses to: the team may propose it, never force
+  it. The submit form has a box for it. There is no separate pilot: the first move is one
+  provider, watched over one nightly before others follow. This replaces "Moving providers
+  starts with one" of 2026-11-15. See section 9.
+- **Providers without an active maintainer** are parked in
+  `music-assistant/unmaintained-providers`, after an announcement. Taking one over means moving
+  it to an own repository. See section 9.
+- **Releases are read in the registry's own pipeline,** with its own Claude API key in a
+  workspace with a monthly spend limit, not by Bot-MArley: the verdict on a release reaches
+  users without a person, so it must not depend on a bot's routine. Bot-MArley writes the
+  summary at admission, where a person decides. This replaces "No new bot" for releases. See
+  sections 3 and 4.
+- **The core team decides admissions,** for now; this is looked at again with the comparison
+  after about twenty admissions. See section 4.
+- **No forms outside the settings.** Settings stay in the setup and config flows. A provider that
+  wants an interface of its own serves a page, opened as a link to a short-lived address the
+  server isolates, never in a frame. See section 11.
 
 ## Requirements
 
@@ -229,7 +250,7 @@ meant for the nightly only is a normal release.
 3. **Load test.** In the official image of each supported server line: install, import the
    module, parse the manifest, and run the provider's own tests where it has them.
 
-**Read**, by Bot-MArley, which never runs code:
+**Read**, by Claude through the registry's own API key, in a step that never runs code:
 
 4. **Red lines.** The difference with the last accepted version is read against section 5. The
    verdict is pass or hold. A hold goes to a person; nothing else does.
@@ -250,13 +271,15 @@ releases two versions; each ends up in the index it passes for.
 
 ### 4. Admission
 
-- The maintainer opens a pull request that adds `provider.json`. The checks of section 3 run on
+- The maintainer submits the provider with the form, and the Music Assistant Bot app opens the
+  pull request that adds `provider.json`. The checks of section 3 run on
   the latest release, plus: the repository is public and has an open source licence, the author
   of the pull request owns or maintains it, and the domain is free.
 - Bot-MArley posts one summary: which service it talks to, how audio reaches the server,
   whether an account is needed, the dependencies, the hosts it contacts, and its verdict on the
   red lines.
-- A person approves or declines on that summary. The Music Assistant Bot app merges.
+- A person of the core team approves or declines on that summary. The Music Assistant Bot app
+  merges.
 - The first twenty or so admissions are all decided by a person. The decisions are then compared
   with the bot's verdicts; if they agree, admissions the bot calls clear are merged without a
   person.
@@ -425,48 +448,64 @@ with the beta image as its image, because `ghcr.io/music-assistant/server:2.11` 
    passes the reusable `check-provider.yml`, and the translations from Lokalise are in the
    repository. The maintainer gets an issue that explains the new workflow and a ready-made
    pull request with the translations and what else is missing.
-2. The domain is added to `moving` in the registry's `reserved_domains.json`.
-3. The maintainer opens the admission pull request and it is admitted.
-4. The indexes of the lines the move reaches list the provider.
-5. One server pull request adds the domain to `MOVED_PROVIDER_DOMAINS` and removes the folder
+2. The maintainer submits it with the box "Moving from the server" of the submit form. The
+   bot checks that the submitter is a code owner of the provider in the server, and the
+   admission pull request adds the domain to `moving` in `reserved_domains.json`. A person of
+   the core team admits it.
+3. The indexes of the lines the move reaches list the provider.
+4. One server pull request adds the domain to `MOVED_PROVIDER_DOMAINS` and removes the folder
    with its tests.
-6. The page on music-assistant.io points to the maintainer's documentation.
-7. The maintainer stops syncing the provider into the server.
+5. The page on music-assistant.io points to the maintainer's documentation.
+6. The maintainer stops syncing the provider into the server.
 
 While the server still ships a provider, the load check of the registry imports the release's
 code ahead of the server's own copy, and fails a release whose import still ends up at the server's
 copy. Its requirements still resolve against the server's packages, which hold the pins of the
 server's copy, so a release keeps those pins until the move.
 
-**The order.** The first to move are the providers whose maintainer already develops and releases
-them from own repositories, in agreement with that maintainer. One provider goes first; the others
-follow once it has moved without trouble.
+**Who decides.** A provider that is actively maintained moves only when its maintainer chooses
+to; the team may propose it, never force it. The first move is one provider, watched over one
+nightly before others follow. The providers below are developed and released from their
+maintainer's own repositories; the move was proposed to their maintainer, who decides.
 
-| Order | Provider | Domain | Type | Repository |
-|---|---|---|---|---|
-| 1 | MCP Server (Community) | `fastmcp_server` | plugin | `trudenboy/ma-provider-mcp` |
-| 2 | Zvuk Music | `zvuk_music` | music | `trudenboy/ma-provider-zvuk-music` |
-| 2 | KION Music | `kion_music` | music | `trudenboy/ma-provider-kion-music` |
-| 2 | Yandex Disk | `filesystem_yandex_disk` | music | `trudenboy/ma-provider-yandex-disk` |
-| 2 | Yandex Station | `yandex_station` | player | `trudenboy/ma-provider-yandex-station` |
-| 2 | Yandex Smart Home | `yandex_smarthome` | plugin | `trudenboy/ma-provider-yandex-smarthome` |
-| 2 | MSX Bridge | `msx_bridge` | player | `trudenboy/ma-provider-msx-bridge` |
-| 3 | Yandex Music | `yandex_music` | music | `trudenboy/ma-provider-yandex-music` |
-| 3 | Yandex Music Connect (Ynison) | `yandex_ynison` | plugin | `trudenboy/ma-provider-yandex-ynison` |
+| Provider | Domain | Type | Repository |
+|---|---|---|---|
+| MCP Server (Community) | `fastmcp_server` | plugin | `trudenboy/ma-provider-mcp` |
+| Zvuk Music | `zvuk_music` | music | `trudenboy/ma-provider-zvuk-music` |
+| KION Music | `kion_music` | music | `trudenboy/ma-provider-kion-music` |
+| Yandex Disk | `filesystem_yandex_disk` | music | `trudenboy/ma-provider-yandex-disk` |
+| Yandex Station | `yandex_station` | player | `trudenboy/ma-provider-yandex-station` |
+| Yandex Smart Home | `yandex_smarthome` | plugin | `trudenboy/ma-provider-yandex-smarthome` |
+| MSX Bridge | `msx_bridge` | player | `trudenboy/ma-provider-msx-bridge` |
+| Yandex Music | `yandex_music` | music | `trudenboy/ma-provider-yandex-music` |
+| Yandex Music Connect (Ynison) | `yandex_ynison` | plugin | `trudenboy/ma-provider-yandex-ynison` |
 
-Yandex Music has the most users and goes last; Ynison depends on it and moves with it.
+Ynison depends on Yandex Music and moves with it.
 
-**Providers without an active maintainer** follow later, separately. The server repository asks
-for a maintainer who follows up. Where a provider has had no active maintainer for a long time
-and the team does the fixes, the team may move it; a year without codeowner activity is the
-working measure. It is announced first, in the app and to the codeowner, so that someone can take
-it over. When nobody does, it moves anyway, into one repository in the Music Assistant
-organisation that parks every provider without a maintainer, and it is listed as looking for a
-maintainer. This is code that shipped with the server before, so hosting it is nothing new.
-Whoever takes a provider over moves it to an own repository. A parked provider that stops loading
-on a server line and that nobody repairs leaves the index of that line. The candidates are
-`jellyfin`, `siriusxm`, `podcastfeed`, `subsonic_scrobble`, `genius_lyrics`, `nugs` and
-`roku_media_assistant`; Plex and Emby have active maintainers and stay.
+**Providers without an active maintainer.** The server repository asks for a maintainer who
+follows up. A provider counts as without an active maintainer when, for six months, none of its
+code owners did anything on it (a change, a review, an answer to a report) while fixes or reports
+came in, and none of them was active elsewhere in the organisation either; or when the account of
+its code owner no longer exists. The team looks at this every six months, and decides per
+provider between carrying it itself in the server (when people use it, or the team already does
+its fixes) and parking it.
+
+A provider that is to be parked is announced for one minor release: its stage becomes
+`unmaintained`, the app shows that it looks for a maintainer, its code owners are named in the
+pull request that sets the stage, and it gets one issue "looking for a maintainer". When nobody
+takes it over, it moves into `music-assistant/unmaintained-providers`: one folder per provider,
+each released on its own through the community catalog with its own tag prefix. The core team
+merges fixes there, and no new features. This is code that shipped with the server before, so
+hosting it is nothing new. Users who have it set up get it from the catalog by themselves, also
+with the community catalog disabled, and keep their settings. A parked provider that stops
+loading on a server line and that nobody repairs leaves the index of that line.
+
+**Taking a parked provider over.** Whoever wants it says so on its issue, and the core team
+decides. The new maintainer puts the folder in a repository of their own and publishes a release
+with the same domain and a higher version; a registry maintainer then points the listing to that
+repository in one pull request (`repository`, `repository_id`, `owner_id`, `folder` and
+`tag_prefix` in `provider.json`). Servers update to that release by themselves and keep their
+settings.
 
 Issues about a community provider that arrive in the support repository are pointed to the
 maintainer's support URL.
@@ -489,7 +528,7 @@ import a folder by its name, so they need one named after the domain.
 
 ### 11. What a community provider can show in the app
 
-- **Menu actions.** A provider declares up to five actions in its manifest: an id, a label,
+- **Menu actions.** A provider declares up to ten actions in its manifest: an id, a label,
   the media types it is offered for, the scope a user needs, an icon name and whether it acts on
   a player. The app draws them in the menu of a media item, or with the ways to play it for an
   action on a player, one entry per instance of the provider, and shows under each entry which
@@ -503,9 +542,15 @@ import a folder by its name, so they need one named after the domain.
   most 40 characters, a translated one of at most 80, and never a text that breaks the line or
   reorders what is around it. The app shows a label only as text and draws an icon only from a
   plain icon name.
-- **Forms.** A provider describes a form with the config entry fields the app already draws.
-- **An own page.** A provider can already serve its own HTML on a route of the webserver. The
-  app can link to it or show it in a frame.
+- **No forms outside the settings.** Settings stay in the setup and config flows.
+- **An own page.** A provider can serve a page of its own. An action answers with a path inside
+  it, and the server turns that into a short-lived address bound to the user and the provider
+  instance, checks both again on every request and forces a sandbox on every response, so the
+  page cannot reach the app's sign-in. The app opens it as a link in a new tab, never in a
+  frame: a page inside the app could pass for the app. Under Home Assistant Ingress and over
+  Remote Access the app opens it on the server's address in the home network.
+- **Links and images.** A link a community provider answers to another site must be https, and
+  the app shows no remote images in the text of any provider.
 - **No provider JavaScript in the app.** A feature that has to be fully part of the interface
   belongs in the server and frontend repositories.
 
