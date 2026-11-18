@@ -297,15 +297,17 @@ Declined at admission, and blocked when found later:
 
 - music the user has no right to: getting around an account, a subscription tier or a region,
   and sources that offer music without the rights holders' permission;
-- circumventing copy protection;
+- getting around copy protection to give more than the service's own app gives the user's
+  account;
 - downloading or exporting music to keep it (a cache used for playback is fine);
 - harmful behaviour: sending the user's data elsewhere, loading code from somewhere else at
   runtime, functions the description does not mention;
 - a provider whose only job is to load other providers or third-party source lists.
 
-Allowed, at the user's own risk: a small audience, an unofficial API used with the user's own
-account, reading a service's web pages, free public content in the quality the service offers
-without a subscription, and code that would not pass review for the server.
+Allowed, at the user's own risk: a small audience, working like the service's own app does for
+the user's own account (also by reverse engineering it: an unofficial API, or decoding protected
+audio to play it), reading a service's web pages, free public content in the quality the service
+offers without a subscription, and code that would not pass review for the server.
 
 The rules get their own page next to the usage policy, with how to report a provider and what
 happens to a blocked one.
