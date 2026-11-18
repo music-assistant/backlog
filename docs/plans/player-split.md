@@ -79,20 +79,19 @@ protocols that point to it, so a protocol belongs to one player by construction.
 switched by a protocol. A one-time migration freezes the current visible id of every existing
 player (RINCON_…, Cast uuid, `up…`) as its player id, so HA entities, user filters, groups, DSP,
 queues and plugin bindings stay as they are. A player created after the change gets an
-MA-minted opaque id. Moving existing players to MA-minted ids, with a clean HA migration, is a
-later step.
+MA-minted opaque id. Existing players keep their frozen id for good: moving them to MA-minted
+ids was dropped (see step 4 of the phases).
 
 **Legacy id.** *(review)* Every player gets a `legacy_id`: the id it had before the split (for a
-frozen id the id itself; after #418 the pre-move id), plus any id absorbed by a merge, together with
+frozen id the id itself), plus any id absorbed by a merge, together with
 the absorbed player's own legacy ids. The API resolves a legacy id wherever a player or queue id is
-taken. `PlayerState` exposes it. The HA migration of #418 maps `unique_id` and the `(DOMAIN,
-player_id)` device identifier on it.
+taken. `PlayerState` exposes it.
 *(decided 2026-11-09)* The field is `legacy_ids: list[str]`, empty by default, on the models
 `Player` (one additive models release, safe for old clients and the pinned HA models version),
 exposed on `PlayerState` and persisted on the player record. One resolver (a reverse index of
 legacy id to player id) serves two entry points: the `api_command` dispatch rewrites the player id
 and queue id arguments before the handler is called, and `get_player` applies it for internal
-callers. Legacy ids are accepted indefinitely. #418's HA migration maps `unique_id` and the device identifier on them.
+callers. Legacy ids are accepted indefinitely.
 
 **Three layers.** *(review)* Not merged into one. `PlayerConfig` is what is persisted and edited.
 `Player` is the live object that owns identity, config, the protocol registry, the queue binding
@@ -333,7 +332,7 @@ grouping (about 1,500 lines).
    provider and an empty manufacturer would raise instead of becoming an unavailable entity. The
    server never publishes an empty manufacturer for such a player (filled from the stored device
    info or the stored provider name) before these players are published; an HA-side guard is a
-   follow-up, not part of #418.
+   follow-up.
 3. **A native protocol for a device that already has a player** attaches to it; the id does not
    change. The universal takeover path goes.
 4. **Naming**: the core object is `Player` (what `mass.players.get_player()` returns); providers
@@ -549,12 +548,13 @@ The cutover is one PR, reviewable per commit. The sequence:
      out end to end (what attaches, what the state becomes, which events go out, what the user
      sees), so the README and the tests describe the same cases. The README stays the single place
      a contributor or a model reads before touching the players core.
-4. **Later, after the release** (#418): move existing players to MA-minted ids together with a
-   migration in the Home Assistant integration (HA otherwise drops and recreates the entities).
+4. ~~**Later, after the release** (#418): move existing players to MA-minted ids together with a
+   migration in the Home Assistant integration.~~
 
-   *(review)* The HA migration maps on `legacy_id` with `async_migrate_entries` for `unique_id` and
-   the device identifier; the server keeps accepting legacy ids.
-   *(decided 2026-11-09)* The field is `legacy_ids` (a list); legacy ids are accepted indefinitely.
+   *(dropped 2026-11-17)* Not needed. A player id is the player's own and never changes again, only
+   new devices get an MA-minted id, and legacy ids are accepted indefinitely. A move would only
+   change how an id looks, at the price of a migration in the server and in the Home Assistant
+   integration.
 
 A shutdown bug found while researching this (queue state of the last 5 s lost because providers
 unload before the queue controller flushes) is independent and goes to dev as its own fix.
