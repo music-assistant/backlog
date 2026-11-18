@@ -291,14 +291,16 @@ provider whose set kept the players of its speakers, hidden or "absorbed". Verif
   rides on their own protocol, which would stay a visible player of the same device. For them the
   old way stays: a sync group with left or right per speaker (`CONF_OUTPUT_CHANNELS`).
 
-**The Sendspin spec.** The Sendspin Weekly of 2026-11-18 agreed to add multi-channel group
-information to the spec, the way `output_delay_ms` works in `roles/player/v1.md`: a server sets it
-with a command, and the client persists it across reboots and server reconnections and reports it.
-The fields are a multi-channel group ID (the same on every speaker of a set), a group name, the
-speaker's own name, a channel per speaker, and later a position in a room of 0 to 1. A set made by
-one server is known to the next. The spec text is drafted for the maintainer first; the channel
-names follow the channel order of Sendspin/spec#350. A client without these fields is not offered
-as a speaker.
+**Music Assistant holds the set; the spec follows.** Decided on 2026-11-19: the set is built now,
+held by Music Assistant, and works with every Sendspin client. The Sendspin spec gets the same
+information in Sendspin/spec#364 (player names, `set_name`) and Sendspin/spec#365 (multichannel
+groups: an `id`, an optional `name`, and per speaker a `channel` and an optional `position`, set
+with `set_multichannel_group` and persisted by the client, the way `output_delay_ms` works). Once
+both are merged and aiosendspin supports them, the provider folds them in: it writes the set to
+every speaker that offers the commands, so another server knows it too, and it recognizes a set
+that another server or the device's firmware made. The set's record uses the spec's values from
+the start (the `id` format, the channel names), so the fold-in adds a step and changes nothing
+stored.
 
 **Model**
 - The set is one Sendspin protocol: a stored virtual Sendspin player of type `MULTI_CHANNEL`, with
@@ -306,24 +308,29 @@ as a speaker.
   virtual players the Sendspin provider has today (`providers/sendspin/provider.py`
   `create_virtual_player`: a server-side client that leads a native Sendspin group and renders no
   audio itself), made permanent.
-- Its speakers are the clients that report its group ID. They are not registered as protocols of
+- Its speakers are the clients in the set's record. They are not registered as protocols of
   their own while they belong to it. The set takes them into its session, each with its channel;
   the session already gives every member a pipeline of its own (`providers/sendspin/playback.py`
   `SendspinPlaybackSession`).
-- Composing: the server writes the group ID, the group name and the channel to each speaker,
-  stores the set's own record (its speakers and their channels), and removes the speaker's own
-  Sendspin protocol with `players.remove_protocol` (`controllers/players/lifecycle.py`). That
+- Composing: `players/create_multi_channel_player(provider, name, members)` in the players
+  controller, offered by a provider with `ProviderFeature.CREATE_MULTI_CHANNEL_PLAYER`, the way
+  `players/create_group_player` works for sync groups. Sendspin offers it first; the frontend shows
+  the entry on an output whose provider offers it. The provider stores the set's record (a group ID
+  of 32 random bytes in base64url as the spec defines it, the name, and per speaker its client id
+  and channel) and removes the speaker's own Sendspin protocol with `players.remove_protocol` (`controllers/players/lifecycle.py`). That
   protocol and its settings go, and its player goes when no other protocol of it is left. A speaker
   with another protocol (an ESPHome speaker that also comes in as a Home Assistant media player)
   keeps that player, and the user removes it if they want.
-- A client that reports a group ID the server has no set for forms or joins that set: another
-  server made it.
+- After the fold-in: a client that reports a group ID the server has no set for forms or joins
+  that set, because another server or its firmware made it.
+- A channel is one of the spec's channel names (`front_left`, `front_right`, `lfe`, ...), a models
+  enum next to `ChannelLayout`.
 - A speaker that is away: the other plays both channels until it is back. The stored speakers let
   the set show it as offline.
-- Taking a set apart: the server clears the fields on its speakers and removes the set's protocol.
-  The clients register as ordinary Sendspin clients again and come back as new players. A speaker
-  that is away at that moment gets its fields cleared when it reconnects; the server keeps that
-  group ID until then.
+- Taking a set apart is removing the set's player. The clients register as ordinary Sendspin
+  clients again and come back as new players. After the fold-in the server also clears the fields
+  on its speakers; a speaker that is away at that moment gets them cleared when it reconnects, and
+  the server keeps that group ID until then.
 - Volume and mute: one level for the set, sent to every speaker.
 - DSP: one DSP for the set, on its normal DSP page. It runs on the stereo signal before each
   speaker takes its channel (`controllers/streams/audio.py` `get_player_output_plan`: the filters,
@@ -354,12 +361,14 @@ as a speaker.
 - One entry for every layout. The layout follows from the channels ("Multi-channel · Stereo pair"
   for left plus right); 2b adds a subwoofer to the channel choice.
 
-**Stored data.** New only, so no migration step: the set's protocol record with its speakers and
-their channels, a group ID kept while a speaker of a set taken apart is away, and the fields on the
-clients. The Sendspin record of a speaker goes when the user composes, which is the user's own
+**Stored data.** New only, so no migration step: the set's protocol record with its group ID, its
+speakers and their channels; after the fold-in also a group ID kept while a speaker of a set taken
+apart is away, and the fields on the clients. The Sendspin record of a speaker goes when the user composes, which is the user's own
 action. Existing sync groups with left and right are not converted.
 
-**2a: stereo pair (#492).** The model above with two speakers, left and right.
+**2a: stereo pair (#492).** The model above with two speakers, left and right, in two steps: the
+set held by Music Assistant, then the fold-in once Sendspin/spec#364 and #365 are merged and
+aiosendspin has a release.
 
 **2b: subwoofer (#493).** A speaker with the subwoofer channel gets a low-passed mix of both
 channels in its own pipeline. Two settings of the set: crossover frequency and subwoofer level. One
