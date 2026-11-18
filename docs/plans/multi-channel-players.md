@@ -1,6 +1,6 @@
 # Multi-channel players: speakers that belong together are one player
 
-Status: decided with the maintainer on 2026-11-17. Epic: #484. Owner: Marcel van der Veldt. This
+Status: decided with the maintainer on 2026-11-17; phase 2 decided on 2026-11-18. Epic: #484. Owner: Marcel van der Veldt. This
 is the technical companion of the epic on the project board, written so it can be fed to an agent
 for implementation.
 
@@ -38,7 +38,9 @@ A set comes to exist in one of two ways:
 
 - **Delivered.** The provider knows the set and registers one protocol for it. Sonos and
   Chromecast do this today; AirPlay joins them. The core only sees the type and the layout.
-- **Composed.** The user builds a set from existing players and gives each a channel.
+- **Composed.** The user builds a set from Sendspin speakers and gives each a channel. The
+  Sendspin provider then delivers it as one protocol, so the core sees it as a delivered set
+  too.
 
 ## Decisions (2026-11-17)
 
@@ -47,8 +49,9 @@ A set comes to exist in one of two ways:
    is no longer sent.
 2. AirPlay delivers its sets itself, like Sonos and Chromecast: one protocol per set, the speakers
    managed inside the provider. No sync group, no core flag for it.
-3. Composing lives in a new builtin provider next to the sync group and the universal group, with
-   a small piece of generic support in the players controller.
+3. Composing lives in the provider of the protocol, and only Sendspin does it: the set is one
+   Sendspin protocol, built on new fields of the Sendspin spec. Decided on 2026-11-18 (see
+   [Phase 2](#phase-2-composed-sets)); this replaces the builtin provider of 2026-11-17.
 4. A delivered set continues on one existing player: the Apple TV for a home theater set, the
    first speaker for a pair. Its id, Home Assistant entity, queue and settings stay. The players
    of the other speakers are removed, with their settings, and return as new players when the
@@ -268,87 +271,121 @@ HomePod pair on an Apple TV (`psgsz=3`).
 
 ## Phase 2: composed sets
 
-Verified starting point: a `Player` holds at most one protocol per domain and one protocol that
-stands for the device (`controllers/players/protocol_linking.py`, the identity veto in
-`controllers/players/matching.py`, the merge check in `controllers/players/merging.py`). Output
-selection, `play_media`, the state derivation and the grouping plan all work with one protocol
-per domain. That rule stays.
+Decided with the maintainer on 2026-11-18. This replaces the model of 2026-11-17, a builtin
+provider whose set kept the players of its speakers, hidden or "absorbed". Verified on server
+`dev` at `a6d071a41`.
 
-**Model** (the cut of the players core review)
-- A builtin provider creates the composed player through the existing group player flow
-  (`ProviderFeature.CREATE_GROUP_PLAYER`, `players/create_group_player`, the frontend's
-  `AddPlayerGroupDialog.vue`) and registers one protocol for it, of type `MULTI_CHANNEL`.
-- Membership is a relation on the record of that protocol: the player ids of the members, under
-  the key that group players use, which a removal and a merge of a player already keep right.
-  The link of a member protocol to its own player stays where it is. Removing the set touches
-  only the set's own protocol, so the members are back as they were.
-- The players of the members are *absorbed*. That is the disabled state with three differences:
-  their protocols stay wanted, so the providers keep them connected; they are hidden from the
-  config listing; enable, merge and unlink refuse. One stored marker on the member's own record
-  says so. They stay candidates for matching, so the other protocols of a member device keep
-  landing on its own player and are there again when the set is removed. This is not the rule
-  of phase 1: a delivered set removes the players of its speakers, a composed set keeps the
-  players of its members and gives them back.
-- One gate at attach, beside the check whether a protocol is wanted and before the player of a
-  protocol is resolved: a protocol of an absorbed player is lent to the set when the relation
-  uses it, and is stored as a link only when it does not.
-- Grouping: the set's protocol declares the domain it groups in, read where the outputs of a
-  player, the grouping snapshot and the "can group with" list are built. The snapshot folds the
-  ids of the speakers into the set, the plan rules work with the set, and the executor expands
-  it into its speakers at the call to the device. The set never reports its speakers as group
-  members. Only the controller's `apply_group_change` calls a protocol's grouping methods; the
-  set's provider goes through the controller, as the sync group does.
-- A foreign protocol is kept off a group player by its type today; for a composed player that
-  guard keys on the virtual role of its own protocol, as the merge check already does.
-- `controllers/streams/audio.py::_get_output_channels` takes the channel from the member table.
-- Members have to be able to sync with each other. Browser and app players are refused.
-- How tight the speakers play together is that of the protocol they share.
+**Why in the protocol provider, and why only Sendspin**
+- A channel per speaker needs a protocol where Music Assistant sends every speaker of a session a
+  stream of its own. AirPlay, Sendspin and squeezelite do (they declare
+  `PlayerFeature.MULTI_DEVICE_DSP`, see `helpers/audio.py` `is_grouping_preventing_dsp`). With
+  Sonos, Cast groups, Snapcast, HEOS and Bluesound the leader passes one stream on, so a channel
+  per speaker cannot be done there. Those brands pair speakers in their own app, which phase 1
+  covers.
+- A player holds one protocol per domain, and output selection, `play_media`, the state derivation
+  and the grouping plan rely on that. A set that holds two Sendspin protocols would break it
+  everywhere. A set that is one protocol of its provider does not: the core sees a delivered set.
+- Only real Sendspin clients take part: ESPHome speakers, sendspin-cpp-cli, devices with Sendspin
+  built in. Generic AirPlay and squeezelite devices wait for a user who asks. Each would need its
+  own implementation in its provider, and their Sendspin bridge (`providers/sendspin/bridge_manager.py`)
+  rides on their own protocol, which would stay a visible player of the same device. For them the
+  old way stays: a sync group with left or right per speaker (`CONF_OUTPUT_CHANNELS`).
 
-**First.** The removal of a group member whose shared output protocol stays registered and reads
-unavailable does nothing today (`controllers/players/grouping_plan.py`); a member of a set takes
-that path, so it is fixed before phase 2.
+**The Sendspin spec.** The Sendspin Weekly of 2026-11-18 agreed to add multi-channel group
+information to the spec, the way `output_delay_ms` works in `roles/player/v1.md`: a server sets it
+with a command, and the client persists it across reboots and server reconnections and reports it.
+The fields are a multi-channel group ID (the same on every speaker of a set), a group name, the
+speaker's own name, a channel per speaker, and later a position in a room of 0 to 1. A set made by
+one server is known to the next. The spec text is drafted for the maintainer first; the channel
+names follow the channel order of Sendspin/spec#350. A client without these fields is not offered
+as a speaker.
 
-**Stored data.** New: the record of the composed player and of its protocol with the member
-relation, and the marker on each member's own record. No existing link moves. The session that
-builds it puts the migration question to the maintainer before it is done.
+**Model**
+- The set is one Sendspin protocol: a stored virtual Sendspin player of type `MULTI_CHANNEL`, with
+  `channel_layout` from the channels of its speakers (left plus right is `stereo`). It builds on the
+  virtual players the Sendspin provider has today (`providers/sendspin/provider.py`
+  `create_virtual_player`: a server-side client that leads a native Sendspin group and renders no
+  audio itself), made permanent.
+- Its speakers are the clients that report its group ID. They are not registered as protocols of
+  their own while they belong to it. The set takes them into its session, each with its channel;
+  the session already gives every member a pipeline of its own (`providers/sendspin/playback.py`
+  `SendspinPlaybackSession`).
+- Composing: the server writes the group ID, the group name and the channel to each speaker,
+  stores the set's own record (its speakers and their channels), and removes the speaker's own
+  Sendspin protocol with `players.remove_protocol` (`controllers/players/lifecycle.py`). That
+  protocol and its settings go, and its player goes when no other protocol of it is left. A speaker
+  with another protocol (an ESPHome speaker that also comes in as a Home Assistant media player)
+  keeps that player, and the user removes it if they want.
+- A client that reports a group ID the server has no set for forms or joins that set: another
+  server made it.
+- A speaker that is away: the other plays both channels until it is back. The stored speakers let
+  the set show it as offline.
+- Taking a set apart: the server clears the fields on its speakers and removes the set's protocol.
+  The clients register as ordinary Sendspin clients again and come back as new players. A speaker
+  that is away at that moment gets its fields cleared when it reconnects; the server keeps that
+  group ID until then.
+- Volume and mute: one level for the set, sent to every speaker.
+- DSP: one DSP for the set, on its normal DSP page. It runs on the stereo signal before each
+  speaker takes its channel (`controllers/streams/audio.py` `get_player_output_plan`: the filters,
+  then the pan to the channel), and a filter can already target front left or front right
+  (`AudioChannel` of the models: PEQ bands, the preamp per channel, Balance). So each speaker can be
+  corrected on its own. Per speaker there is only the channel and the output delay
+  (`set_output_delay`, persisted by the client). Room correction per speaker is designed later with
+  its owner.
+- Grouping stays inside Sendspin. Other Sendspin players join the set's session. When the set joins
+  another Sendspin leader, its speakers join that session with their channels, and the leader
+  reports the set's protocol id, not theirs. The set is a member of sync groups and universal
+  groups like any Sendspin player.
+- The one addition outside the Sendspin provider: `get_player_output_plan` reads the DSP and the
+  channel from the protocol it is given (`_resolve_player_dsp_config_id`, `_get_output_channels`).
+  A speaker of a set is no registered protocol, so the output plan takes the set's DSP owner and the
+  speaker's channel from the caller.
 
-**To decide with the maintainer at the start of phase 2** (the code does not settle these):
-- the queues of the members while they are absorbed;
-- whether the id of a member resolves to the set, for clients and automations that still name it;
-- user filters and allow-lists that name a member;
-- per-member settings and DSP: a player that is not live has no config entries, the DSP of a
-  speaker's stream resolves to the player its protocol is attached to, and the per-protocol
-  output channel setting competes with the member table;
-- a member behind its own power control;
-- whether the layout is stored, so it shows while the device is away.
+**Interface** (the sketch the maintainer approved)
+- Every output (protocol) row in a player's settings gets a ⋮ menu. Its first item, "Split off as
+  its own player", moves there from the player's top-right menu; that is a frontend PR of its own,
+  built first. #492 adds "Make multi-channel player…" to it on a real Sendspin output.
+- The dialog: this speaker, the speaker to add (Sendspin speakers in no set), a channel each (left
+  and right first, with a swap button), and a name. One line says that the Sendspin output of each
+  speaker moves to the new player, and that a player without another output disappears, with its
+  settings.
+- The set's settings page lists its speakers as rows (channel, name, online or offline) that open
+  to the channel and the output delay. Its top-right menu has "Take apart".
+- One entry for every layout. The layout follows from the channels ("Multi-channel · Stereo pair"
+  for left plus right); 2b adds a subwoofer to the channel choice.
 
-**2a: stereo pair (#492).** Two members, left and right. No new settings: balance is the existing
-DSP filter, delay the existing per-protocol setting, shown under each member.
+**Stored data.** New only, so no migration step: the set's protocol record with its speakers and
+their channels, a group ID kept while a speaker of a set taken apart is away, and the fields on the
+clients. The Sendspin record of a speaker goes when the user composes, which is the user's own
+action. Existing sync groups with left and right are not converted.
 
-**2b: subwoofer (#493).** A subwoofer member gets a low-passed mix of both channels. Two settings:
-crossover frequency and subwoofer level. A single speaker with a subwoofer is the 1.1 case. This
-stays inside the stereo pipeline.
+**2a: stereo pair (#492).** The model above with two speakers, left and right.
 
-**2c: multi-channel audio (#494).** Sources with more than two channels, an upmix of stereo, and
-a pipeline and DSP that carry the channels. Verified today: the PCM, flow, realtime and
-announcement formats cap at two channels (`controllers/streams/audio.py`, `helpers/audio.py`),
-and the DSP knows the channels all, front left and front right. Not designed here.
+**2b: subwoofer (#493).** A speaker with the subwoofer channel gets a low-passed mix of both
+channels in its own pipeline. Two settings of the set: crossover frequency and subwoofer level. One
+speaker with a subwoofer is the 1.1 case. This stays inside the stereo pipeline.
+
+**2c: multi-channel audio (#494, a story of its own).** Sources with more than two channels, an
+upmix of stereo, and a pipeline and DSP that carry the channels. Verified today: the PCM, flow,
+realtime and announcement formats cap at two channels (`controllers/streams/audio.py`,
+`helpers/audio.py`), and the DSP knows the channels all, front left and front right. Not designed
+here.
 
 **Kept open for 2c**
 - The layout is an open list of speaker counts; a new one needs no change of the model.
-- The channel of a member is a channel of that layout: the existing `AudioChannel` enum of the
-  models, extended with `LFE` in 2b and the surround channels later. Never a filter string.
-- Every speaker of a set keeps its own output pipeline, as the members of a sync session have
-  today, so 2c changes what feeds a speaker and not how a set is built.
-- The subwoofer is fed by bass management, which later also takes a real LFE channel.
+- The channel of a speaker is a channel of the spec, in the channel order of Sendspin/spec#350.
+  Never a filter string.
+- Every speaker keeps its own pipeline in the Sendspin session, so 2c changes what feeds a speaker
+  and not how a set is built. The channel targets of the DSP grow with the layout.
 - No new API or stored value says "two".
 
 ## Verification
 
 - Every guaranteed behaviour gets a scenario with a test id in
   `controllers/players/SCENARIOS.md`: the type and layout, the group volume of a set that leads,
-  a set as a member of a sync group and of a universal group; for phase 2 also a restart in any
-  order, a member that arrives late or is removed, and a removal that restores everything.
+  a set as a member of a sync group and of a universal group. Phase 2 gets tests in the Sendspin
+  provider: composing and taking apart, a speaker that is away (the other plays both channels), a
+  set made by another server, and a restart in any order.
 - End-to-end lab with virtual players: a composed pair of two Sendspin players, alone and in a
   group, left and right checked in the captured audio.
 - Real devices for AirPlay: an Apple TV with a HomePod as its speaker (start, pause, seek, next,
