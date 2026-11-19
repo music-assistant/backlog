@@ -507,8 +507,8 @@ maintainer's support URL.
 predictable layout for a repository with a single provider (`provider/`, as the first nine have
 it) and one for a repository with several (a folder per domain). A server installs the folder
 under the domain, the registry takes the domain from `provider.json`, and the manifest in the
-folder must name that domain. Only a local development folder, the test fixture and the Dev app
-import a folder by its name, so they need one named after the domain.
+folder must name that domain. A local development folder, the test fixture and the Dev app load
+all three layouts as well (server#7946).
 
 ### 10. Contributing to the server
 
