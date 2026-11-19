@@ -132,8 +132,8 @@ keeps following up.
 - **The findings of a hold go to the maintainer, not into a security advisory.** A hold is
   reported in the provider's issue on the registry, with the rule, the file and the line. The
   project does not take on security scans of other people's code: what it can do is hold back a
-  release or block a provider. A private report on the registry's Security tab is used only for
-  that. See sections 3 and 5.
+  release or block a provider. The registry takes no private security reports either: a security
+  problem in a provider is a matter for its maintainer. See sections 3 and 5.
 
 ## Requirements
 
