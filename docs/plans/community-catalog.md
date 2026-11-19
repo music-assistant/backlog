@@ -123,6 +123,18 @@ keeps following up.
   wants an interface of its own serves a page, opened as a link to a short-lived address the
   server isolates, never in a frame. See section 11.
 
+## Decisions taken on 2026-11-19
+
+- **The reading signs in through GitHub, not with a key.** The release job gets a short-lived
+  Claude token through workload identity federation (GitHub OIDC), so no key is stored anywhere.
+  The workspace keeps its monthly spend limit. This replaces "its own Claude API key" of
+  2026-11-18. See section 3.
+- **The findings of a hold go to the maintainer, not into a security advisory.** A hold is
+  reported in the provider's issue on the registry, with the rule, the file and the line. The
+  project does not take on security scans of other people's code: what it can do is hold back a
+  release or block a provider. A private report on the registry's Security tab is used only for
+  that. See sections 3 and 5.
+
 ## Requirements
 
 - A server makes no request to the registry while the community catalog is off and no community
@@ -251,10 +263,11 @@ meant for the nightly only is a normal release.
 3. **Load test.** In the server image of each channel: install, import the module and parse the
    manifest.
 
-**Read**, by Claude through the registry's own API key, in a step that never runs code:
+**Read**, by Claude, signed in through GitHub OIDC, in a step that never runs code:
 
 4. **Red lines.** The difference with the last accepted version is read against section 5. The
-   verdict is pass or hold. A hold goes to a person; nothing else does.
+   verdict is pass or hold. Only a hold goes to a person; its findings go to the maintainer in
+   the issue of point 6.
 
 **Write**, by the Music Assistant Bot app:
 
