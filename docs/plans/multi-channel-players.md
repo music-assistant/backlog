@@ -375,10 +375,9 @@ channels in its own pipeline. Two settings of the set: crossover frequency and s
 speaker with a subwoofer is the 1.1 case. This stays inside the stereo pipeline.
 
 **2c: multi-channel audio (#494, a story of its own).** Sources with more than two channels, an
-upmix of stereo, and a pipeline and DSP that carry the channels. Verified today: the PCM, flow,
-realtime and announcement formats cap at two channels (`controllers/streams/audio.py`,
-`helpers/audio.py`), and the DSP knows the channels all, front left and front right. Not designed
-here.
+upmix of stereo, and a pipeline and DSP that carry the channels. Planned in
+[multi-channel-audio.md](multi-channel-audio.md); its step 4 builds combined surround sets on the
+sets of 2a and 2b.
 
 **Kept open for 2c**
 - The layout is an open list of speaker counts; a new one needs no change of the model.
