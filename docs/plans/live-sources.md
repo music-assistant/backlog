@@ -1,6 +1,6 @@
 # Live sources: a place of their own, and names that say what they are
 
-Status: decided with the maintainer on 2026-11-20. Epic: #571. Owner: Marcel van der Veldt. This
+Status: decided with the maintainer on 2026-11-20; the page on 2026-11-21. Epic: #571. Owner: Marcel van der Veldt. This
 is the technical companion of the epic on the project board, written so it can be fed to an agent
 for implementation.
 
@@ -154,14 +154,16 @@ It has a **name**, which says what it is, and it **belongs to** a player or to n
   name the user gives it in its settings.
 
 **One rule for showing it.** On the player it belongs to, a source shows by its name alone.
-Everywhere else it shows as "name (player)". A source that belongs to no player, or to a device
-that is only an input, shows by its name alone everywhere.
+Where one line shows it elsewhere, it shows as "name (player)". A list with a second line shows
+the name with the player on that line. A source that belongs to no player, or to a device that
+is only an input, shows by its name alone everywhere.
 
 | Where | Shown as |
 |---|---|
 | Source list of Living Room, and its Home Assistant entity | Record player · Spotify Connect |
 | Now playing on Living Room, no track title reported | Record player |
-| Live sources page, Browse, search, Settings | Record player (Living Room) · Spotify Connect (Kitchen) · VBAN Receiver |
+| Browse | Record player (Living Room) · Spotify Connect (Kitchen) · VBAN Receiver |
+| Live sources page, search, Settings | Record player, with Living Room on the second line · VBAN Receiver |
 | Now playing on Kitchen, or on a group, no track title reported | Record player (Living Room) |
 | Living Room as a member of that group | Record player |
 | A device that is only an input, named "Record player" | Record player |
@@ -170,8 +172,8 @@ The **inputs of a speaker** (Line-in, TV, Optical) are not live sources: the spe
 itself, Music Assistant only switches it. They keep the names the speaker gives them and stay
 in its source list. Where a system can play the input of one speaker on its other speakers,
 those speakers list it too, named by the same rule: "Line-in" on the speaker itself, "Line-in
-(Den)" on the others. The Live sources page shows the inputs the selected speaker can switch
-to, apart from the live sources.
+(Den)" on the others. The Live sources page lists the inputs the selected speaker can switch
+to in the same overview as the live sources.
 
 ## Decisions (2026-11-20)
 
@@ -200,6 +202,15 @@ to, apart from the live sources.
    on Discover, and receivers that can only be started from a phone on the page. Recently played
    stays without live sources.
 
+## Decisions (2026-11-21)
+
+10. The page is one overview in the style of the other pages, such as Artists and Playlists: the
+    live sources and the inputs of the selected speaker together. A row shows the name of the
+    source, with the player that offers it on a second line ("Line-in", below it "Office"). This
+    replaces the two groups of the mock-up of 2026-11-20.
+11. Browse keeps one line per source, "Record player (Living Room)", because the mobile app and
+    other clients show only the name. Browse can follow the page once they show a second line.
+
 ## Steps
 
 ### 1. Now playing shows a live source once (frontend, #572)
@@ -225,6 +236,9 @@ name at the moment it is read, for the place it is read for.
   reads as a subtitle on other items (`src/components/discover/EditorialMediaCard.vue:284`), nor
   `player_id` alone, which on a session is the player a source plays on
   (`controllers/players/audio_sources.py:76`).
+- `PlayerSource` gets the same field, for an input a speaker offers from another speaker of its
+  system (step 5), so the core composes its name by the same rule and the list of step 3 can
+  show that speaker on a second line.
 
 **Server: providers**
 - Inside the server a source always carries its plain name.
@@ -252,9 +266,9 @@ name at the moment it is read, for the place it is read for.
   source starts with (`controllers/players/audio_sources.py:909`) and the names on its stream
   (`controllers/streams/controller.py:190`, `:326`, `:2312`).
 - A source that is sent to a client as a media item carries the name for outside a player: in
-  the list and the folder of step 3, and in the answer of the item commands
-  (`controllers/music/controller.py:1608-1619`). The session takes the source with its plain
-  name.
+  the folder of step 3 and in the answer of the item commands
+  (`controllers/music/controller.py:1608-1619`). The list of step 3 carries the plain name and
+  the player, for a second line. The session takes the source with its plain name.
 
 **Not handled.** Two sources with the same name on one player: Home Assistant keeps the last
 one (`media_player.py:300-307`). A player renamed while its source plays elsewhere shows under
@@ -270,13 +284,19 @@ the new name. The title a speaker shows on its own display follows the same rule
 
 ### 3. The list of live sources, and one folder in Browse (server, #575)
 
-- A command that returns the live sources a user can start, for a player: what the Browse root
-  collects today (`controllers/music/controller.py:1088-1095`, `:3134-3160`). Without a player
-  it returns them for all players, which is what Settings and the menu need. A source that
-  belongs to a player the user has no access to is left out; the new field makes that one
+- A command that returns, for a player, the live sources a user can start: what the Browse root
+  collects today (`controllers/music/controller.py:1088-1095`, `:3134-3160`). With them come the
+  inputs that player can switch to: the entries of its source list that step 4 marks as an input
+  and that are not passive, none for a player that is synced to another, as in the source menu
+  (`src/helpers/player_menu_items.ts:311`). Each entry carries its plain name and the player it
+  belongs to, so the app shows that player on a second line (decision 10). Without a player it
+  returns the live sources for all players, which is what Settings and the menu need. A source
+  that belongs to a player the user has no access to is left out; the new field makes that one
   check.
 - The Browse root lists one folder "Live sources" in place of the entries per provider
-  (`:1085-1107`), holding that same list. It is left out when the list is empty. The folder
+  (`:1085-1107`), holding the live sources of that list, each with its name for outside a
+  player, "Record player (Living Room)", so every client tells them apart on one line (decision
+  11). It is left out when the list is empty. The folder
   needs a scheme of its own next to `discover` (`controllers/music/constants.py:72`), handled
   like that one with a way back to the root (`controller.py:1112-1131`), and a translated title.
 - The listing per provider (`controller.py:1149-1158`) stays, so a path an older app holds keeps
@@ -323,22 +343,21 @@ The page lists inputs, so an entry has to say that it is one.
 - A menu item "Live sources" below Radio in `MENU_ITEM_REGISTRY`, with `available()` true when
   the list of step 3 is not empty or a player has an input to switch to. Hidden and
   reordered like every item; a new id takes its default place in a saved order by itself.
-- The page lists the live sources for the selected player, each with the name of step 2 and the
-  icon of what delivers it. A click plays on the selected player, as in Browse
-  (`src/helpers/media_item_actions.ts:158-161`). The context menu keeps "Play now" and gets
-  "Settings" for administrators: the settings of the player a source belongs to, or of the
-  provider for a source without one.
-- A second group, under the name of the selected player's system, lists the inputs that player
-  can switch to: the entries of its source list that step 5 marks as an input and that are not
-  passive. A click selects the source on that player. For a Sonos that is TV and Line-in, and
-  with step 6 the line-in of its other speakers. The group follows the rule of the source menu
-  and is left out for a player that is synced to another
-  (`src/helpers/player_menu_items.ts:311`).
-- The media type gets an icon (`src/helpers/media_type_icon.ts:17-28`), and a list row a second
-  line (`src/components/ListviewItem.vue:238-241`).
+- The page is built like the other pages, such as Artists and Playlists, with their list and
+  panel views. It shows the list of step 3 for the selected player in one overview: the live
+  sources and the inputs that player can switch to, for a Sonos TV and Line-in, and with step 5
+  the line-in of its other speakers. A row shows the name as its title and the player the source
+  belongs to on a second line (`src/components/ListviewItem.vue:238-241`), by the current name
+  of that player; a source without a player has none.
+- A click on a live source plays it on the selected player, as in Browse
+  (`src/helpers/media_item_actions.ts:158-161`); a click on an input selects it on that player.
+  The context menu keeps "Play now" and gets "Settings" for administrators: the settings of the
+  player a source belongs to, or of the provider for a source without one.
+- The media type gets an icon (`src/helpers/media_type_icon.ts:17-28`). A live source in Browse
+  keeps one line (decision 11).
 - The app refreshes the list when players or providers come and go, and when the page opens.
-- Built after the mock-up the maintainer approved; the built page is shown to him before it is
-  merged.
+- Built as decided with the maintainer on 2026-11-21; the built page is shown to him before it
+  is merged.
 - The page says which player it plays on, and what to do when none is selected.
 
 Screenshots with made-up players, as for every UI change.
@@ -354,7 +373,8 @@ unchanged.
 ### 8. Search finds a live source by name (frontend, #580)
 
 The search window gets a section "Live sources" that matches the typed text against the names in
-the list the app already holds. A click plays. The search of the server and of the music
+the list the app already holds. A click plays. Rows look like those of the page: the name, with
+the player on a second line. The search of the server and of the music
 services is not involved.
 
 ### 9. Docs (#581)
@@ -365,8 +385,7 @@ to name an input, and that Home Assistant selects them by name. On the `beta` br
 ## Order
 
 Step 1 stands alone. The models fields of steps 2 and 4 are released before the server and the
-app use them. Step 5 needs steps 2 and 4. Step 6 needs steps 3 and 4; steps 7 and 8 need the
-list of step 3 and the names of step 2.
+app use them. Steps 3 and 5 need steps 2 and 4. Steps 6, 7 and 8 need the list of step 3.
 
 ## Later, and what this must not block
 
