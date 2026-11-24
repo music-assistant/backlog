@@ -1,6 +1,6 @@
 # Squeezebox and squeezelite speakers in Sendspin groups: technical plan
 
-Status: #464–#467 implemented 2026-11-15/16 (see "Changes during implementation"); #469 is a draft (server#7739) that waits for the test on real speakers in #468. Owner: Marcel van der Veldt. This document is the technical companion of the "Squeezebox and squeezelite speakers play in sync with Sendspin speakers" epic (#463) on the project board. It is written so it can be fed to an agent for implementation.
+Status: done 2026-11-24. All sub-issues landed and #468 was confirmed on Squeezebox Radio and Boom hardware by a tester (see "What landed after the first round"). Owner: Marcel van der Veldt. This document is the technical companion of the "Squeezebox and squeezelite speakers play in sync with Sendspin speakers" epic (#463) on the project board. It is written so it can be fed to an agent for implementation.
 
 Claims marked "verified" were checked in the referenced code:
 - server `dev` at `6e33e7f3b` and `feature/player-split`;
@@ -62,6 +62,28 @@ What landed differs from the design below where noted here (2026-11-15/16).
 **Decided, still open:**
 - FLAC on Wi-Fi and the start-jump threshold (10 ms; below it a start takes ~25 s to come within 3 ms) wait for the measurements on real speakers in #468.
 - A pause in a Sendspin group is a stop plus a new stream at the position, about 2 s to resume. A real pause needs support in the bridge role and is not planned.
+
+## What landed after the first round
+
+2026-11-17/24, after the hardware tests of #468.
+
+- **server#7875:** a speaker has one Sendspin output, whichever connection (squeezelite, AirPlay, Chromecast) carries it, with a migration for the outputs stored per connection. Sendspin over Chromecast stays experimental and off until the user switches it on.
+- **server#7917:** on a device with several connections, squeezelite carries the Sendspin output first. On the WiiM, slimproto settled 2-3 ms late and within 1.2 ms from start to start, AirPlay 8-14 ms and within 6.2 ms.
+- **server#7739 (#469):** all grouped playback of these speakers goes through Sendspin. The squeezelite protocol no longer offers native grouping, and the multi-client stream, `/slimproto/multi` and the `SyncGroup` calls are gone. A first Squeezebox, a SqueezeSlave and a device of unknown type get no Sendspin output and play on their own.
+- **server#7916:** a restarted stream gets its full lead at once.
+- **server#7920:** a group stop leaves the stopped track on the speaker, so its Play button works again.
+- **aioslimproto#620 (3.6.4) + server#7918:** a late end of the previous stream no longer stops the new one.
+- **Follow-ups:** the position in the track on the speaker's own display (server#7942), repeat and shuffle on the speaker (server#7934, aioslimproto#623), and the user docs (music-assistant.io#1246).
+
+**Tester result (#468).** Two Radios and a Boom on Wi-Fi: play, pause, seek, skip, artwork and joining the group work. With lossless audio over Wi-Fi the Boom dropped out once; with mp3 for the Boom it stayed in.
+
+**Left open on purpose**, until a user reports it:
+- more lead for the first start of a speaker on weak Wi-Fi;
+- a signal for the end of the source instead of the current give-up after three short dry runs;
+- a group leader that gives up keeps the group (ungrouping it from the controller is the planned answer);
+- the fallback from FLAC to PCM stays for the session;
+- a late `STMd` of a previous stream in aioslimproto;
+- the Chromecast static delay is lost when it is edited in the same save that switches the carrier.
 
 ## Requirements
 
